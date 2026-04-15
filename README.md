@@ -1,6 +1,6 @@
 # 🪙 altaycoins Coin Imaging Suite
 
-A lightweight, purely web-based image processing application built with [Streamlit](https://streamlit.io/). This tool is designed specifically for numismatists, coin collectors, and photographers to easily remove backgrounds, stitch, crop, edit, and enhance coin photography without needing complex desktop software.
+A lightweight, purely web-based image processing application built with [Streamlit](https://altaycoins.streamlit.app/). This tool is designed specifically for numismatists, coin collectors, and photographers to easily remove backgrounds, stitch, crop, edit, and enhance coin photography without needing complex desktop software.
 
 ## ✨ Features
 
