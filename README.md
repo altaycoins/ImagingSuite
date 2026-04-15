@@ -63,4 +63,4 @@ rembg
 
 
 📄 License
-Copyright (c) 2026 altaycoins. All rights reserved.
+Copyright (c) 2026 altaycoins.com  All rights reserved.
