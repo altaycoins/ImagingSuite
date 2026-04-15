@@ -3,7 +3,6 @@ from PIL import Image, ImageEnhance
 import io
 import os
 import zipfile
-import time
 
 try:
     from rembg import remove
@@ -34,50 +33,6 @@ TOOL_INFO = {
     'enhancer': "Apply a sharpening filter to bring out fine details."
 }
 
-# --- FORWARDING ENGINE ---
-class MockFile(io.BytesIO):
-    """Mimics a Streamlit UploadedFile so our tools can read forwarded images seamlessly."""
-    def __init__(self, initial_bytes, name):
-        super().__init__(initial_bytes)
-        self.name = name
-        self.file_id = f"mock_{time.time()}_{name}"
-
-def forward_image(img, filename, target_view):
-    if 'forwarded_files' not in st.session_state:
-        st.session_state.forwarded_files = []
-        
-    fmt = st.session_state.get('global_format', 'JPEG')
-    buf = io.BytesIO()
-    img_to_save = img if fmt == 'PNG' else composite_on_white(img)
-    img_to_save.save(buf, format=fmt, quality=100)
-    
-    mock_file = MockFile(buf.getvalue(), filename)
-    st.session_state.forwarded_files.append(mock_file)
-    
-    for key in [f"{target_view}_results", f"{target_view}_id"]:
-        if key in st.session_state:
-            del st.session_state[key]
-            
-    st.session_state.view = target_view
-    st.rerun()
-
-def render_action_buttons(base_name, processed_image, filename, mime_type):
-    """Generates the Download and Forward buttons uniformly for all tools."""
-    c1, c2, c3 = st.columns([2, 2, 1])
-    # Create a stable, unique key based on the view and filename
-    key_base = f"{st.session_state.view}_{filename}"
-    
-    with c1:
-        img_data = get_download_data(processed_image)
-        st.download_button(label="⬇️ Download", data=img_data, file_name=filename, mime=mime_type, key=f"dl_{key_base}", width='stretch')
-    with c2:
-        tools_list = {k: v for k, v in TOOL_PAGES.items() if k != st.session_state.view}
-        target = st.selectbox("Forward to:", options=list(tools_list.keys()), format_func=lambda x: tools_list[x], key=f"sel_{key_base}", label_visibility="collapsed")
-    with c3:
-        if st.button("➡️ Send", key=f"btn_{key_base}", width='stretch', type="primary"):
-            forward_image(processed_image, filename, target)
-
-# --- UTILS ---
 def info_box(text):
     st.markdown(f'<div style="background-color: #e6f3ff; border-left: 5px solid #0066cc; padding: 10px; border-radius: 5px; margin-bottom: 1rem;">{text}</div>', unsafe_allow_html=True)
 
@@ -90,14 +45,14 @@ def composite_on_white(img):
         return img.convert('RGB')
 
 def get_file_meta(base_name, suffix=""):
-    fmt = st.session_state.get('global_format', 'JPEG')
+    fmt = st.session_state.get('global_format', 'PNG')
     ext = "jpg" if fmt == "JPEG" else "png"
     mime = "image/jpeg" if fmt == "JPEG" else "image/png"
     filename = f"{base_name}_{suffix}.{ext}" if suffix else f"{base_name}.{ext}"
     return filename, mime, fmt
 
 def get_download_data(img):
-    fmt = st.session_state.get('global_format', 'JPEG')
+    fmt = st.session_state.get('global_format', 'PNG')
     img_to_save = img if fmt == 'PNG' else composite_on_white(img)
     buf = io.BytesIO()
     img_to_save.save(buf, format=fmt, quality=100)
@@ -106,11 +61,12 @@ def get_download_data(img):
 def create_zip_download_button(processed_items, zip_filename_base, default_suffix=""):
     if not processed_items or len(processed_items) <= 1: return
     st.divider()
-    st.subheader("📦 Batch Download")
+    st.subheader("Download All Together")
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         for item in processed_items:
+            # Handle standard tuples (base_name, img) or splitter tuples (base_name, img, suffix)
             if len(item) == 3:
                 base_name, img, suffix = item
             else:
@@ -125,7 +81,7 @@ def create_zip_download_button(processed_items, zip_filename_base, default_suffi
             zipf.writestr(filename, img_byte_arr.getvalue())
             
     st.download_button(
-        label=f"Download All {len(processed_items)} files as ZIP",
+        label="📦 Download All as ZIP",
         data=zip_buffer.getvalue(),
         file_name=f"{zip_filename_base}.zip",
         mime="application/zip",
@@ -159,8 +115,7 @@ def swapper_logic(files):
     if files and 'swapper_results' not in st.session_state:
         processed_images = []
         for f in files:
-            # We use f.getvalue() to prevent hitting the end of the file stream on reruns
-            image = Image.open(io.BytesIO(f.getvalue())) 
+            image = Image.open(f) 
             base, _ = os.path.splitext(f.name)
             
             w, h = image.size
@@ -196,12 +151,25 @@ def swapper_logic(files):
             filename, mime, fmt = get_file_meta(base, "swapped")
             st.write(f"**Processing:** `{base}`")
             
-            mid = st.slider("Adjust split point", 1, w - 1, w // 2, key=item['file_ref'].file_id, on_change=_run_swap, args=(idx,))
+            mid = st.slider(
+                "Adjust split point", 1, w - 1, w // 2, 
+                key=item['file_ref'].file_id,
+                on_change=_run_swap,
+                args=(idx,)
+            )
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns([2, 2, 1])
             col1.image(image, caption="Original", width='stretch') 
             col2.image(processed_image, caption="Swapped", width='stretch')
-            render_action_buttons(base, processed_image, filename, mime)
+
+            img_data = get_download_data(processed_image)
+            col3.download_button(
+                label="Download", 
+                data=img_data, 
+                file_name=filename, 
+                mime=mime,
+                key=f"download_{base}"
+            )
             st.divider()
             
         final_processed = [(item['base_name'], item['processed']) for item in st.session_state.swapper_results if item['processed']]
@@ -209,25 +177,21 @@ def swapper_logic(files):
 
 def stitcher_logic(files):
     if len(files) % 2 != 0:
-        st.warning("Please provide an even number of images to create pairs."); return
+        st.warning("Please upload an even number of images to create pairs."); return
     files.sort(key=lambda f: f.name)
     resize_option = st.radio("Resizing Option", ["Make smaller image match larger", "Make larger image match smaller"], horizontal=True)
     pairs = [(files[i], files[i+1]) for i in range(0, len(files), 2)]
     st.subheader("Image Pairs")
     for i, (f1, f2) in enumerate(pairs):
         st.write(f"**Pair {i+1}:** `{f1.name}` & `{f2.name}`")
-        c1, c2 = st.columns(2)
-        # Pass raw bytes directly to st.image to avoid burning the file pointers
-        c1.image(f1.getvalue(), width='stretch')
-        c2.image(f2.getvalue(), width='stretch')
+        c1, c2 = st.columns(2); c1.image(f1, width='stretch'); c2.image(f2, width='stretch')
         st.divider()
-        
     if st.button("Process All Pairs", width='stretch', type="primary"):
         processed_images = []
         with st.spinner("Stitching images..."):
             for f1, f2 in pairs:
-                img1 = composite_on_white(Image.open(io.BytesIO(f1.getvalue())))
-                img2 = composite_on_white(Image.open(io.BytesIO(f2.getvalue())))
+                img1 = composite_on_white(Image.open(f1))
+                img2 = composite_on_white(Image.open(f2))
 
                 h1, h2 = img1.height, img2.height
                 target_h = max(h1, h2) if resize_option.startswith("Make smaller") else min(h1, h2)
@@ -248,8 +212,10 @@ def stitcher_logic(files):
             st.rerun()
         for base, img in st.session_state.stitcher_results:
             filename, mime, _ = get_file_meta(base, "stitched")
-            st.image(img, caption=filename, width='stretch')
-            render_action_buttons(base, img, filename, mime)
+            col1, col2 = st.columns([3, 1])
+            col1.image(img, caption=filename, width='stretch')
+            img_data = get_download_data(img)
+            col2.download_button(label="Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
             st.divider()
         create_zip_download_button(st.session_state.stitcher_results, "stitched_coins", "stitched")
 
@@ -262,8 +228,11 @@ def splitter_logic(files):
         image = item['original']
         w, h = image.size
         
-        item['processed_a'] = image.crop((0, 0, mid, h))
-        item['processed_b'] = image.crop((mid, 0, w, h))
+        part_a = image.crop((0, 0, mid, h))
+        part_b = image.crop((mid, 0, w, h))
+
+        st.session_state.splitter_results[idx]['processed_a'] = part_a
+        st.session_state.splitter_results[idx]['processed_b'] = part_b
 
     current_files_id = [f.file_id for f in files] if files else None
 
@@ -274,16 +243,19 @@ def splitter_logic(files):
     if files and 'splitter_results' not in st.session_state:
         processed_images = []
         for f in files:
-            image = Image.open(io.BytesIO(f.getvalue()))
+            image = Image.open(f)
             base, _ = os.path.splitext(f.name)
             
             w, h = image.size
             mid_default = w // 2
 
+            part_a_default = image.crop((0, 0, mid_default, h))
+            part_b_default = image.crop((mid_default, 0, w, h))
+
             processed_images.append({
                 'original': image,
-                'processed_a': image.crop((0, 0, mid_default, h)),
-                'processed_b': image.crop((mid_default, 0, w, h)), 
+                'processed_a': part_a_default,
+                'processed_b': part_b_default, 
                 'base_name': base,
                 'file_ref': f
             })
@@ -299,29 +271,57 @@ def splitter_logic(files):
             st.rerun()
 
         for idx, item in enumerate(st.session_state.splitter_results):
-            original_image, part_a, part_b, base = item['original'], item['processed_a'], item['processed_b'], item['base_name']
+            original_image = item['original']
+            part_a = item['processed_a'] 
+            part_b = item['processed_b'] 
+            base = item['base_name']
             w, h = original_image.size
             
             filename_a, mime_a, _ = get_file_meta(base, "a")
             filename_b, mime_b, _ = get_file_meta(base, "b")
             
             st.write(f"**Processing:** `{base}`")
-            st.slider("Adjust split point", 1, w - 1, w // 2, key=item['file_ref'].file_id, on_change=_run_split, args=(idx,))
+            
+            st.slider(
+                "Adjust split point", 1, w - 1, w // 2,
+                key=item['file_ref'].file_id,
+                on_change=_run_split, 
+                args=(idx,)
+            )
+            
             st.image(original_image, caption="Original", width='stretch')
             
             col1, col2 = st.columns(2)
             with col1:
                 st.image(part_a, caption=filename_a, width='stretch')
-                render_action_buttons(base, part_a, filename_a, mime_a)
+                img_data_a = get_download_data(part_a)
+                st.download_button(
+                    label=f"Download {filename_a}",
+                    data=img_data_a,
+                    file_name=filename_a,
+                    mime=mime_a,
+                    width='stretch',
+                    key=f"download_a_{base}"
+                )
             with col2:
                 st.image(part_b, caption=filename_b, width='stretch')
-                render_action_buttons(base, part_b, filename_b, mime_b)
+                img_data_b = get_download_data(part_b)
+                st.download_button(
+                    label=f"Download {filename_b}",
+                    data=img_data_b,
+                    file_name=filename_b,
+                    mime=mime_b,
+                    width='stretch',
+                    key=f"download_b_{base}"
+                )
             st.divider()
             
         final_processed = []
         for item in st.session_state.splitter_results:
-            if item['processed_a']: final_processed.append((item['base_name'], item['processed_a'], "a"))
-            if item['processed_b']: final_processed.append((item['base_name'], item['processed_b'], "b"))
+            if item['processed_a']:
+                final_processed.append((item['base_name'], item['processed_a'], "a"))
+            if item['processed_b']:
+                final_processed.append((item['base_name'], item['processed_b'], "b"))
         
         create_zip_download_button(final_processed, "split_coins")
 
@@ -337,7 +337,7 @@ def remover_logic(files):
         processed_images = []
         for i, f in enumerate(files):
             progress_bar.progress((i) / len(files), f"Processing {f.name}...")
-            original_image = Image.open(io.BytesIO(f.getvalue()))
+            original_image = Image.open(f)
             output_bytes = remove(f.getvalue())
             result_image = Image.open(io.BytesIO(output_bytes))
             base, _ = os.path.splitext(f.name)
@@ -358,10 +358,12 @@ def remover_logic(files):
             filename, mime, _ = get_file_meta(base, "no-bg")
             
             st.write(f"**File:** `{base}`")
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns([2, 2, 1])
             col1.image(item['original'], caption="Original", width='stretch')
             col2.image(item['processed'], caption="Background Removed", width='stretch')
-            render_action_buttons(base, item['processed'], filename, mime)
+            
+            img_data = get_download_data(item['processed'])
+            col3.download_button(label="Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
             st.divider()
             
         final_processed = [(item['base_name'], item['processed']) for item in st.session_state.remover_results]
@@ -374,7 +376,7 @@ def cropper_logic(files):
     else:
         img_file = files[0]
         
-    original_image = Image.open(io.BytesIO(img_file.getvalue()))
+    original_image = Image.open(img_file)
     aspect_ratios = {"Free": None, "1:1": (1,1), "16:9": (16,9), "4:3": (4,3), "3:2": (3,2), "9:16": (9,16), "3:4": (3,4), "2:3": (2,3)}
     aspect_choice = st.selectbox("Aspect Ratio:", options=list(aspect_ratios.keys()))
     st.info("Drag the corners of the box to crop your image.")
@@ -385,7 +387,8 @@ def cropper_logic(files):
     
     base, _ = os.path.splitext(img_file.name)
     filename, mime, _ = get_file_meta(base, "cropped")
-    render_action_buttons(base, cropped_img, filename, mime)
+    img_data = get_download_data(cropped_img)
+    st.download_button(label=f"⬇️ Download Cropped Image", data=img_data, file_name=filename, mime=mime, width='stretch')
 
 def corrector_logic(files):
     st.subheader("Correction Settings")
@@ -411,7 +414,7 @@ def corrector_logic(files):
         processed_images = []
         with st.spinner("Processing all images..."):
             for f in files:
-                original_image = Image.open(io.BytesIO(f.getvalue()))
+                original_image = Image.open(f)
                 result_image = apply_corrections(original_image)
                 base, _ = os.path.splitext(f.name)
                 processed_images.append((base, result_image))
@@ -430,18 +433,18 @@ def corrector_logic(files):
         if len(processed_images) == 1:
             st.success("Your image has been processed.")
             col1, col2 = st.columns(2)
-            # Use getvalue() to prevent stream EOF errors on re-renders
-            col1.image(files[0].getvalue(), caption="Original", width='stretch')
+            col1.image(Image.open(files[0]), caption="Original", width='stretch')
             col2.image(processed_images[0][1], caption="Processed", width='stretch')
             
             base, img = processed_images[0]
             filename, mime, _ = get_file_meta(base, "corrected")
-            render_action_buttons(base, img, filename, mime)
+            img_data = get_download_data(img)
+            st.download_button(label=f"⬇️ Download {filename}", data=img_data, file_name=filename, mime=mime, width='stretch')
         else:
             st.success(f"All {len(processed_images)} images have been processed.")
             st.info("A preview of the first image is shown below.")
             col1, col2 = st.columns(2)
-            col1.image(files[0].getvalue(), caption="Original", width='stretch')
+            col1.image(Image.open(files[0]), caption="Original", width='stretch')
             col2.image(processed_images[0][1], caption="Processed", width='stretch')
             create_zip_download_button(processed_images, "corrected_images", "corrected")
 
@@ -470,13 +473,15 @@ def watermarker_logic(files):
             pos_x = int(original.width * px - wm_resized.width * px)
             pos_y = int(original.height * py - wm_resized.height * py)
             transparent = Image.new('RGBA', original.size, (0,0,0,0)); transparent.paste(original, (0,0)); transparent.paste(wm_resized, (pos_x, pos_y), mask=wm_resized)
+            
+            # Use format-aware saving instead of forcing composite on white here
             return transparent
 
         if st.button("Apply Watermark", width='stretch', type="primary"):
             processed_images = []
             with st.spinner("Processing all images..."):
                 for f in files:
-                    original_image = Image.open(io.BytesIO(f.getvalue()))
+                    original_image = Image.open(f)
                     result_image = apply_watermark(original_image)
                     base, _ = os.path.splitext(f.name)
                     processed_images.append((base, result_image))
@@ -495,17 +500,18 @@ def watermarker_logic(files):
         if len(processed_images) == 1:
             st.success("Your image has been processed.")
             col1, col2 = st.columns(2)
-            col1.image(files[0].getvalue(), caption="Original", width='stretch')
+            col1.image(Image.open(files[0]), caption="Original", width='stretch')
             col2.image(processed_images[0][1], caption="Processed", width='stretch')
             
             base, img = processed_images[0]
             filename, mime, _ = get_file_meta(base, "watermarked")
-            render_action_buttons(base, img, filename, mime)
+            img_data = get_download_data(img)
+            st.download_button(label=f"⬇️ Download {filename}", data=img_data, file_name=filename, mime=mime, width='stretch')
         else:
             st.success(f"All {len(processed_images)} images have been processed.")
             st.info("A preview of the first image is shown below.")
             col1, col2 = st.columns(2)
-            col1.image(files[0].getvalue(), caption="Original", width='stretch')
+            col1.image(Image.open(files[0]), caption="Original", width='stretch')
             col2.image(processed_images[0][1], caption="Processed", width='stretch')
             create_zip_download_button(processed_images, "watermarked_images", "watermarked")
 
@@ -521,7 +527,7 @@ def enhancer_logic(files):
         processed_images = []
         with st.spinner("Processing all images..."):
             for f in files:
-                original_image = Image.open(io.BytesIO(f.getvalue()))
+                original_image = Image.open(f)
                 result_image = apply_enhancement(original_image)
                 base, _ = os.path.splitext(f.name)
                 processed_images.append((base, result_image))
@@ -540,17 +546,18 @@ def enhancer_logic(files):
         if len(processed_images) == 1:
             st.success("Your image has been processed.")
             col1, col2 = st.columns(2)
-            col1.image(files[0].getvalue(), caption="Original", width='stretch')
+            col1.image(Image.open(files[0]), caption="Original", width='stretch')
             col2.image(processed_images[0][1], caption="Processed", width='stretch')
             
             base, img = processed_images[0]
             filename, mime, _ = get_file_meta(base, "enhanced")
-            render_action_buttons(base, img, filename, mime)
+            img_data = get_download_data(img)
+            st.download_button(label=f"⬇️ Download {filename}", data=img_data, file_name=filename, mime=mime, width='stretch')
         else:
             st.success(f"All {len(processed_images)} images have been processed.")
             st.info("A preview of the first image is shown below.")
             col1, col2 = st.columns(2)
-            col1.image(files[0].getvalue(), caption="Original", width='stretch')
+            col1.image(Image.open(files[0]), caption="Original", width='stretch')
             col2.image(processed_images[0][1], caption="Processed", width='stretch')
             create_zip_download_button(processed_images, "enhanced_images", "enhanced")
 
@@ -565,9 +572,8 @@ with st.sidebar:
     
     st.session_state.global_format = st.selectbox(
         "Download Format", 
-        options=["JPEG", "PNG"], 
-        index=0, 
-        format_func=lambda x: "JPG (Composited on White)" if x == "JPEG" else "PNG (Supports Transparency)"
+        options=["PNG", "JPEG"], 
+        format_func=lambda x: "PNG (Supports Transparency)" if x == "PNG" else "JPG (Composited on White)"
     )
     st.divider()
     
@@ -613,28 +619,14 @@ if tool_function:
                 del st.session_state[key]
     st.session_state.last_view = current_view
     
-    # --- ACTIVE WORKSPACE FILES ---
-    active_files = []
-    
-    if 'forwarded_files' in st.session_state and st.session_state.forwarded_files:
-        st.success(f"📥 You have {len(st.session_state.forwarded_files)} image(s) forwarded to this tool.")
-        active_files.extend(st.session_state.forwarded_files)
-        if st.button("Clear Forwarded Images"):
-            st.session_state.forwarded_files = []
-            st.rerun()
-            
     uploaded_files = st.file_uploader(
-        "Upload new image(s)",
+        "Upload your image(s)",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
         key=current_view
     )
-    
     if uploaded_files:
-        active_files.extend(uploaded_files)
-        
-    if active_files:
-        tool_function(active_files)
+        tool_function(uploaded_files)
 else:
     st.session_state.view = 'remover'
     st.rerun()
