@@ -51,9 +51,8 @@ streamlit run ImagingSuite.py
 Note: Make sure your main python file is named ImagingSuite.py. If it is named differently, replace ImagingSuite.py with your file name.
 
 📦 Requirements
-Your requirements.txt should contain the following libraries:
+
 ```
-Plaintext
 streamlit
 streamlit-cropper
 Pillow
