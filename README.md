@@ -58,7 +58,6 @@ streamlit-cropper
 Pillow
 rembg
 ```
-(Note: OpenCV and piexif are no longer required for this lightweight version of the app).
 
 
 📄 License
