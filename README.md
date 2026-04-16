@@ -23,8 +23,8 @@ To run this application locally on your computer, follow these steps:
 
 **1. Clone the repository**
 ```bash
-git clone [https://github.com/altaycoins/altaycoins-imaging-suite.git](https://github.com/altaycoins/altaycoins-imaging-suite.git)
-cd altaycoins-imaging-suite 
+git clone https://github.com/altaycoins/ImagingSuite.git
+cd ImagingSuite
 ```
 2. Create a virtual environment
 It is highly recommended to use a virtual environment to manage dependencies.
