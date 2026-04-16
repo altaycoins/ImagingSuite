@@ -26,7 +26,7 @@ To run this application locally on your computer, follow these steps:
 git clone https://github.com/altaycoins/ImagingSuite.git
 cd ImagingSuite
 ```
-2. Create a virtual environment
+**2. Create a virtual environment**
 It is highly recommended to use a virtual environment to manage dependencies.
 
 ```bash
@@ -38,12 +38,12 @@ python -m venv .venv
 python3 -m venv .venv
 source .venv/bin/activate
 ```
-3. Install dependencies
+**3. Install dependencies**
 
 ```bash
 pip install -r requirements.txt
 ```
-4. Run the application
+**4. Run the application**
 
 ```Bash
 streamlit run ImagingSuite.py
