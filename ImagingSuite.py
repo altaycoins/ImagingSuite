@@ -23,7 +23,7 @@ TOOL_PAGES = {
 }
 
 TOOL_INFO = {
-    'remover': "Automatically remove the background from images using AI.",
+    'remover': "Automatically remove the background from images using AI. Auto-crops and stitches multi-side coins.",
     'stitcher': "Stitch coin sides together horizontally. Upload images in pairs.",
     'splitter': "Split stitched images into two separate files (e.g., obverse and reverse).",
     'swapper': "Swap the obverse and reverse sides of a coin image.",
@@ -45,14 +45,14 @@ def composite_on_white(img):
         return img.convert('RGB')
 
 def get_file_meta(base_name, suffix=""):
-    fmt = st.session_state.get('global_format', 'PNG')
+    fmt = st.session_state.get('global_format', 'JPEG') # Fallback to JPEG
     ext = "jpg" if fmt == "JPEG" else "png"
     mime = "image/jpeg" if fmt == "JPEG" else "image/png"
     filename = f"{base_name}_{suffix}.{ext}" if suffix else f"{base_name}.{ext}"
     return filename, mime, fmt
 
 def get_download_data(img):
-    fmt = st.session_state.get('global_format', 'PNG')
+    fmt = st.session_state.get('global_format', 'JPEG')
     img_to_save = img if fmt == 'PNG' else composite_on_white(img)
     buf = io.BytesIO()
     img_to_save.save(buf, format=fmt, quality=100)
@@ -75,7 +75,7 @@ def create_zip_download_button(processed_items, zip_filename_base, default_suffi
             
             filename, _, fmt = get_file_meta(base_name, suffix)
             img_to_save = img if fmt == 'PNG' else composite_on_white(img)
-                 
+                  
             img_byte_arr = io.BytesIO()
             img_to_save.save(img_byte_arr, format=fmt, quality=100)
             zipf.writestr(filename, img_byte_arr.getvalue())
@@ -340,8 +340,42 @@ def remover_logic(files):
             original_image = Image.open(f)
             output_bytes = remove(f.getvalue())
             result_image = Image.open(io.BytesIO(output_bytes))
+            
+            # --- Auto Crop / Split / Stitch Logic ---
+            bbox = result_image.getbbox() # Get bounding box of non-transparent pixels
+            if bbox:
+                cropped_full = result_image.crop(bbox)
+                w, h = cropped_full.size
+                
+                # If width is significantly larger than height (e.g. >1.3 ratio), assume two coin sides
+                if w > h * 1.3:
+                    mid = w // 2
+                    left_side = cropped_full.crop((0, 0, mid, h))
+                    right_side = cropped_full.crop((mid, 0, w, h))
+                    
+                    # Tightly crop the individual sides to remove center gap
+                    left_bbox = left_side.getbbox()
+                    right_bbox = right_side.getbbox()
+                    
+                    if left_bbox and right_bbox:
+                        left_side = left_side.crop(left_bbox)
+                        right_side = right_side.crop(right_bbox)
+                        
+                        # Stitch them perfectly together
+                        stitched = Image.new("RGBA", (left_side.width + right_side.width, max(left_side.height, right_side.height)))
+                        stitched.paste(left_side, (0, 0))
+                        stitched.paste(right_side, (left_side.width, 0))
+                        result_image = stitched
+                    else:
+                        result_image = cropped_full
+                else:
+                    # Single side coin - just crop the extra part
+                    result_image = cropped_full
+            # ----------------------------------------
+            
             base, _ = os.path.splitext(f.name)
             processed_images.append({'original': original_image, 'processed': result_image, 'base_name': base})
+            
         progress_bar.empty()
         st.session_state.remover_results = processed_images
         st.session_state.remover_id = current_files_id
@@ -572,7 +606,7 @@ with st.sidebar:
     
     st.session_state.global_format = st.selectbox(
         "Download Format", 
-        options=["PNG", "JPEG"], 
+        options=["JPEG", "PNG"], # CHANGED TO DEFAULT TO JPEG
         format_func=lambda x: "PNG (Supports Transparency)" if x == "PNG" else "JPG (Composited on White)"
     )
     st.divider()
