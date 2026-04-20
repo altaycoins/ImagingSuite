@@ -179,7 +179,7 @@ def stitcher_logic(files):
     if len(files) % 2 != 0:
         st.warning("Please upload an even number of images to create pairs."); return
     files.sort(key=lambda f: f.name)
-    resize_option = st.radio("Resizing Option", ["Make smaller image match larger", "Make larger image match smaller"], horizontal=True)
+    resize_option = st.radio("Resizing Option", ["Make smaller image match larger", "Make larger image match smaller"], index=1, horizontal=True)
     pairs = [(files[i], files[i+1]) for i in range(0, len(files), 2)]
     st.subheader("Image Pairs")
     for i, (f1, f2) in enumerate(pairs):
@@ -341,7 +341,7 @@ def remover_logic(files):
             output_bytes = remove(f.getvalue())
             result_image = Image.open(io.BytesIO(output_bytes))
             
-            # --- Auto Crop / Split / Stitch Logic ---
+            # --- Auto Crop / Split / Resize / Stitch Logic ---
             bbox = result_image.getbbox() # Get bounding box of non-transparent pixels
             if bbox:
                 cropped_full = result_image.crop(bbox)
@@ -361,8 +361,16 @@ def remover_logic(files):
                         left_side = left_side.crop(left_bbox)
                         right_side = right_side.crop(right_bbox)
                         
+                        # --- Resize to make the larger image match the smaller one ---
+                        target_h = min(left_side.height, right_side.height)
+                        
+                        if left_side.height != target_h:
+                            left_side = left_side.resize((int(left_side.width * target_h / left_side.height), target_h), Image.Resampling.LANCZOS)
+                        if right_side.height != target_h:
+                            right_side = right_side.resize((int(right_side.width * target_h / right_side.height), target_h), Image.Resampling.LANCZOS)
+                        
                         # Stitch them perfectly together
-                        stitched = Image.new("RGBA", (left_side.width + right_side.width, max(left_side.height, right_side.height)))
+                        stitched = Image.new("RGBA", (left_side.width + right_side.width, target_h))
                         stitched.paste(left_side, (0, 0))
                         stitched.paste(right_side, (left_side.width, 0))
                         result_image = stitched
@@ -371,7 +379,7 @@ def remover_logic(files):
                 else:
                     # Single side coin - just crop the extra part
                     result_image = cropped_full
-            # ----------------------------------------
+            # ---------------------------------------------------
             
             base, _ = os.path.splitext(f.name)
             processed_images.append({'original': original_image, 'processed': result_image, 'base_name': base})
@@ -606,7 +614,7 @@ with st.sidebar:
     
     st.session_state.global_format = st.selectbox(
         "Download Format", 
-        options=["JPEG", "PNG"], # CHANGED TO DEFAULT TO JPEG
+        options=["JPEG", "PNG"],
         format_func=lambda x: "PNG (Supports Transparency)" if x == "PNG" else "JPG (Composited on White)"
     )
     st.divider()
