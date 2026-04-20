@@ -342,7 +342,13 @@ def remover_logic(files):
             result_image = Image.open(io.BytesIO(output_bytes))
             
             # --- Auto Crop / Split / Resize / Stitch Logic ---
-            bbox = result_image.getbbox() # Get bounding box of non-transparent pixels
+            def get_clean_bbox(img, threshold=20):
+                """Helper to ignore nearly invisible noise from rembg before cropping"""
+                alpha = img.split()[-1]
+                # Any pixel with alpha > threshold is considered valid bounding box content
+                return alpha.point(lambda p: p if p > threshold else 0).getbbox()
+
+            bbox = get_clean_bbox(result_image)
             if bbox:
                 cropped_full = result_image.crop(bbox)
                 w, h = cropped_full.size
@@ -354,8 +360,8 @@ def remover_logic(files):
                     right_side = cropped_full.crop((mid, 0, w, h))
                     
                     # Tightly crop the individual sides to remove center gap
-                    left_bbox = left_side.getbbox()
-                    right_bbox = right_side.getbbox()
+                    left_bbox = get_clean_bbox(left_side)
+                    right_bbox = get_clean_bbox(right_side)
                     
                     if left_bbox and right_bbox:
                         left_side = left_side.crop(left_bbox)
@@ -374,6 +380,12 @@ def remover_logic(files):
                         stitched.paste(left_side, (0, 0))
                         stitched.paste(right_side, (left_side.width, 0))
                         result_image = stitched
+                    elif left_bbox:
+                        # Fallback if the right side was entirely empty/artifacts
+                        result_image = left_side.crop(left_bbox)
+                    elif right_bbox:
+                        # Fallback if the left side was entirely empty/artifacts
+                        result_image = right_side.crop(right_bbox)
                     else:
                         result_image = cropped_full
                 else:
