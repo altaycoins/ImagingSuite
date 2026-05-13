@@ -56,6 +56,7 @@ Note: Make sure your main python file is named ImagingSuite.py. If it is named d
 streamlit
 streamlit-cropper
 Pillow
+pandas
 rembg
 ```
 
