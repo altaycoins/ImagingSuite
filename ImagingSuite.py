@@ -2,6 +2,7 @@ import streamlit as st
 from PIL import Image, ImageEnhance
 import io
 import os
+import re
 import zipfile
 import tempfile
 import shutil
@@ -76,14 +77,21 @@ init_db()
 # --- DISK MEMORY MANAGEMENT HELPERS ---
 
 def init_temp_dir():
-    if 'temp_dir' not in st.session_state or not os.path.exists(st.session_state.temp_dir):
+    if 'temp_dir' not in st.session_state:
         st.session_state.temp_dir = tempfile.mkdtemp()
+    
+    # Force the directory to exist right now, just in case the cloud OS wiped it
+    os.makedirs(st.session_state.temp_dir, exist_ok=True)
     return st.session_state.temp_dir
 
 def cleanup_temp_dir():
     if 'temp_dir' in st.session_state and os.path.exists(st.session_state.temp_dir):
         shutil.rmtree(st.session_state.temp_dir)
         del st.session_state.temp_dir
+
+def sanitize_filename(name):
+    # Removes hidden slashes, newlines, or illegal path characters
+    return re.sub(r'[\\/*?:"<>|\n\r]', "", name)
 
 # ----------------------------------------
 
@@ -466,7 +474,11 @@ def remover_logic(files):
                         final_image = cropped_full
                 
                 base, _ = os.path.splitext(f.name)
+                base = sanitize_filename(base) # ADD THIS LINE
+                
                 temp_path = os.path.join(temp_dir, f"{base}_nobg.png")
+                
+                os.makedirs(temp_dir, exist_ok=True) # ADD THIS LINE to prevent the Errno 2 crash
                 final_image.save(temp_path, format="PNG")
                 processed_images.append({'file_ref': f, 'processed_path': temp_path, 'base_name': base})
                 
@@ -762,7 +774,7 @@ def stats_logic(files=None):
     df.columns = ['Tool Name', 'Total Uses', 'Images Processed']
     df['Tool Name'] = df['Tool Name'].str.capitalize()
     
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
 
 
 # --- MAIN APP LAYOUT ---
