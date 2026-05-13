@@ -6,6 +6,8 @@ import zipfile
 import tempfile
 import shutil
 import gc
+import sqlite3
+import pandas as pd
 
 try:
     from rembg import remove
@@ -22,7 +24,8 @@ TOOL_PAGES = {
     'cropper': "✂️ Cropper",
     'corrector': "🎨 Corrector",
     'watermarker': "💧 Watermarker",
-    'enhancer': "🔍 Enhancer"
+    'enhancer': "🔍 Enhancer",
+    'stats': "📊 Statistics"
 }
 
 TOOL_INFO = {
@@ -35,6 +38,40 @@ TOOL_INFO = {
     'watermarker': "Apply a watermark to a batch of photos.",
     'enhancer': "Apply a sharpening filter to bring out fine details."
 }
+
+# --- DATABASE MANAGEMENT HELPERS ---
+
+DB_FILE = "usage_stats.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS stats
+                 (tool_name TEXT PRIMARY KEY, uses INTEGER, images_processed INTEGER)''')
+    conn.commit()
+    conn.close()
+
+def update_stats(tool_name, num_images):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''INSERT INTO stats (tool_name, uses, images_processed) 
+                 VALUES (?, 1, ?)
+                 ON CONFLICT(tool_name) DO UPDATE SET 
+                 uses = uses + 1, 
+                 images_processed = images_processed + ?''', 
+              (tool_name, num_images, num_images))
+    conn.commit()
+    conn.close()
+
+def get_stats():
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT * FROM stats ORDER BY uses DESC", conn)
+    conn.close()
+    return df
+
+# Initialize DB on load
+init_db()
+
 
 # --- DISK MEMORY MANAGEMENT HELPERS ---
 
@@ -62,7 +99,7 @@ def composite_on_white(img):
         return img.convert('RGB')
 
 def get_file_meta(base_name, suffix=""):
-    fmt = st.session_state.get('global_format', 'JPEG') # Fallback to JPEG
+    fmt = st.session_state.get('global_format', 'JPEG') 
     ext = "jpg" if fmt == "JPEG" else "png"
     mime = "image/jpeg" if fmt == "JPEG" else "image/png"
     filename = f"{base_name}_{suffix}.{ext}" if suffix else f"{base_name}.{ext}"
@@ -91,7 +128,6 @@ def create_zip_download_button(processed_items, zip_filename_base, default_suffi
             
             filename, _, fmt = get_file_meta(base_name, suffix)
             
-            # Load from path if string, otherwise use object
             img = Image.open(img_source) if isinstance(img_source, str) else img_source
             img_to_save = img if fmt == 'PNG' else composite_on_white(img)
                   
@@ -157,6 +193,7 @@ def swapper_logic(files):
                     'file_ref': f
                 })
         
+        update_stats('swapper', len(files))
         gc.collect()    
         st.session_state.swapper_results = processed_images
         st.session_state.swapper_id = current_files_id
@@ -239,6 +276,7 @@ def stitcher_logic(files):
                     processed_images.append((base, temp_path))
                     
                 gc.collect()
+            update_stats('stitcher', len(files))
         st.session_state.stitcher_results = processed_images
 
     if 'stitcher_results' in st.session_state:
@@ -309,6 +347,7 @@ def splitter_logic(files):
                     'file_ref': f
                 })
         
+        update_stats('splitter', len(files))
         gc.collect()
         st.session_state.splitter_results = processed_images
         st.session_state.splitter_id = current_files_id
@@ -434,6 +473,7 @@ def remover_logic(files):
             gc.collect()
             
         progress_bar.empty()
+        update_stats('remover', len(files))
         st.session_state.remover_results = processed_images
         st.session_state.remover_id = current_files_id
 
@@ -466,12 +506,15 @@ def remover_logic(files):
         create_zip_download_button(final_processed, "removed_bg", "no-bg")
 
 def cropper_logic(files):
-    # Cropper operates entirely locally on one file at a time, so no temp disk save is strictly needed
     if len(files) > 1:
         file_to_crop = st.selectbox("Choose an image to crop", options=[f.name for f in files])
         img_file = next((f for f in files if f.name == file_to_crop), files[0])
     else:
         img_file = files[0]
+        
+    if 'cropper_tracked' not in st.session_state or st.session_state.cropper_tracked != img_file.name:
+        update_stats('cropper', 1)
+        st.session_state.cropper_tracked = img_file.name
         
     img_file.seek(0)
     original_image = Image.open(img_file)
@@ -521,6 +564,7 @@ def corrector_logic(files):
                     result_image.save(temp_path, format="PNG")
                     processed_images.append((base, temp_path))
             gc.collect()
+            update_stats('corrector', len(files))
                     
         st.session_state.corrector_results = processed_images
         st.session_state.corrector_files_id = [f.file_id for f in files]
@@ -597,6 +641,7 @@ def watermarker_logic(files):
                         result_image.save(temp_path, format="PNG")
                         processed_images.append((base, temp_path))
                 gc.collect()
+                update_stats('watermarker', len(files))
             st.session_state.watermarker_results = processed_images
             st.session_state.watermarker_files_id = [f.file_id for f in files]
             st.rerun()
@@ -653,6 +698,7 @@ def enhancer_logic(files):
                     result_image.save(temp_path, format="PNG")
                     processed_images.append((base, temp_path))
             gc.collect()
+            update_stats('enhancer', len(files))
         st.session_state.enhancer_results = processed_images
         st.session_state.enhancer_files_id = [f.file_id for f in files]
         st.rerun()
@@ -687,6 +733,37 @@ def enhancer_logic(files):
             st.success(f"All {len(processed_images)} images have been processed.")
             st.info("A preview of the first image is shown above.")
             create_zip_download_button(processed_images, "enhanced_images", "enhanced")
+
+def stats_logic(files=None):
+    st.subheader("App Usage Statistics")
+    st.info("Note: Because this app runs on a cloud server, these statistics will reset if the server reboots or goes to sleep.")
+    
+    df = get_stats()
+    
+    if df.empty:
+        st.write("No usage data recorded yet.")
+        return
+
+    # Calculate totals
+    total_uses = df['uses'].sum()
+    total_images = df['images_processed'].sum()
+    
+    # Display high-level metrics
+    col1, col2 = st.columns(2)
+    col1.metric("Total Tool Executions", total_uses)
+    col2.metric("Total Images Processed", total_images)
+    
+    st.divider()
+    
+    # Display the breakdown table
+    st.write("**Breakdown by Tool**")
+    
+    # Clean up the dataframe for display
+    df.columns = ['Tool Name', 'Total Uses', 'Images Processed']
+    df['Tool Name'] = df['Tool Name'].str.capitalize()
+    
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 # --- MAIN APP LAYOUT ---
 st.set_page_config(page_title="altaycoins Coin Imaging Suite", layout="centered", initial_sidebar_state="expanded")
@@ -724,7 +801,8 @@ tool_logic_map = {
     'cropper': cropper_logic,
     'corrector': corrector_logic,
     'watermarker': watermarker_logic,
-    'enhancer': enhancer_logic
+    'enhancer': enhancer_logic,
+    'stats': stats_logic
 }
 
 current_view = st.session_state.get('view', 'remover')
@@ -749,14 +827,18 @@ if tool_function:
         
     st.session_state.last_view = current_view
     
-    uploaded_files = st.file_uploader(
-        "Upload your image(s)",
-        type=["jpg", "jpeg", "png"],
-        accept_multiple_files=True,
-        key=current_view
-    )
-    if uploaded_files:
-        tool_function(uploaded_files)
+    # Hide the file uploader if the user is on the Stats page
+    if current_view != 'stats':
+        uploaded_files = st.file_uploader(
+            "Upload your image(s)",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key=current_view
+        )
+        if uploaded_files:
+            tool_function(uploaded_files)
+    else:
+        tool_function()
 else:
     st.session_state.view = 'remover'
     st.rerun()
