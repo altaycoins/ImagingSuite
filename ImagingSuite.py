@@ -278,7 +278,7 @@ def create_zip_download_button(processed_items, zip_filename_base, default_suffi
             data=f.read(),
             file_name=f"{zip_filename_base}.zip",
             mime="application/zip",
-            use_container_width=True
+            width='stretch'
         )
 
     try:
@@ -404,8 +404,8 @@ def remover_logic(files):
             original = safe_open_image(item['file'])
 
             if original:
-                col1.image(original, caption="Original", use_container_width=True)
-            col2.image(item['path'], caption="Processed", use_container_width=True)
+                col1.image(original, caption="Original", width='stretch')
+            col2.image(item['path'], caption="Processed", width='stretch')
 
             with Image.open(item['path']) as img:
                 img_data = get_download_data(img)
@@ -445,11 +445,11 @@ def stitcher_logic(files):
     st.write("### Image Pairs Preview")
     for i, (f1, f2) in enumerate(pairs):
         c1, c2 = st.columns(2)
-        c1.image(f1, caption=f1.name, use_container_width=True)
-        c2.image(f2, caption=f2.name, use_container_width=True)
+        c1.image(f1, caption=f1.name, width='stretch')
+        c2.image(f2, caption=f2.name, width='stretch')
     st.divider()
 
-    if st.button("Process All Pairs", type="primary", use_container_width=True):
+    if st.button("Process All Pairs", type="primary", width='stretch'):
         temp_dir = init_temp_dir()
         processed = []
 
@@ -492,7 +492,7 @@ def stitcher_logic(files):
         for base, path in st.session_state.stitcher_results:
             filename, mime, _ = get_file_meta(base, "stitched")
             col1, col2 = st.columns([3,1])
-            col1.image(path, caption=filename, use_container_width=True)
+            col1.image(path, caption=filename, width='stretch')
             with Image.open(path) as img:
                 img_data = get_download_data(img)
             col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
@@ -576,28 +576,28 @@ def splitter_logic(files):
                 args=(idx,)
             )
             
-            st.image(original_image, caption="Original", use_container_width=True)
+            st.image(original_image, caption="Original", width='stretch')
             col1, col2 = st.columns(2)
             with col1:
-                st.image(part_a, caption=filename_a, use_container_width=True)
+                st.image(part_a, caption=filename_a, width='stretch')
                 img_data_a = get_download_data(part_a)
                 st.download_button(
                     label=f"Download A",
                     data=img_data_a,
                     file_name=filename_a,
                     mime=mime_a,
-                    use_container_width=True,
+                    width='stretch',
                     key=f"download_a_{base}"
                 )
             with col2:
-                st.image(part_b, caption=filename_b, use_container_width=True)
+                st.image(part_b, caption=filename_b, width='stretch')
                 img_data_b = get_download_data(part_b)
                 st.download_button(
                     label=f"Download B",
                     data=img_data_b,
                     file_name=filename_b,
                     mime=mime_b,
-                    use_container_width=True,
+                    width='stretch',
                     key=f"download_b_{base}"
                 )
             st.divider()
@@ -689,8 +689,8 @@ def swapper_logic(files):
             )
             
             col1, col2, col3 = st.columns([2, 2, 1])
-            col1.image(image, caption="Original", use_container_width=True) 
-            col2.image(processed_image, caption="Swapped", use_container_width=True)
+            col1.image(image, caption="Original", width='stretch') 
+            col2.image(processed_image, caption="Swapped", width='stretch')
 
             img_data = get_download_data(processed_image)
             col3.download_button(
@@ -729,7 +729,7 @@ def cropper_logic(files):
         key=f"cropper_{file.name}"
     )
 
-    st.image(cropped, caption="Cropped Result", use_container_width=True)
+    st.image(cropped, caption="Cropped Result", width='stretch')
     base, _ = os.path.splitext(file.name)
     filename, mime, _ = get_file_meta(base, "cropped")
     img_data = get_download_data(cropped)
@@ -739,7 +739,7 @@ def cropper_logic(files):
         data=img_data,
         file_name=filename,
         mime=mime,
-        use_container_width=True
+        width='stretch'
     )
 
 
@@ -754,7 +754,7 @@ def corrector_logic(files):
     sharpness = st.slider("Sharpness", 0.0, 3.0, 1.0)
     saturation = st.slider("Saturation (Color)", 0.0, 2.0, 1.0)
 
-    if st.button("Apply Corrections", type="primary", use_container_width=True):
+    if st.button("Apply Corrections", type="primary", width='stretch'):
         temp_dir = init_temp_dir()
         processed = []
 
@@ -787,7 +787,7 @@ def corrector_logic(files):
         for base, path in st.session_state.corrector_results:
             filename, mime, _ = get_file_meta(base, "corrected")
             col1, col2 = st.columns([3,1])
-            col1.image(path, caption=filename, use_container_width=True)
+            col1.image(path, caption=filename, width='stretch')
             with Image.open(path) as img:
                 img_data = get_download_data(img)
             col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
@@ -812,7 +812,7 @@ def watermarker_logic(files):
         scale = c2.slider("Scale %", 10, 100, 25)
         opacity = c3.slider("Opacity %", 0, 100, 50)
 
-        if st.button("Apply Watermark", type="primary", use_container_width=True):
+        if st.button("Apply Watermark", type="primary", width='stretch'):
             temp_dir = init_temp_dir()
             processed = []
 
@@ -857,7 +857,7 @@ def watermarker_logic(files):
         for base, path in st.session_state.watermarker_results:
             filename, mime, _ = get_file_meta(base, "watermarked")
             col1, col2 = st.columns([3,1])
-            col1.image(path, caption=filename, use_container_width=True)
+            col1.image(path, caption=filename, width='stretch')
             with Image.open(path) as img:
                 img_data = get_download_data(img)
             col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
@@ -872,7 +872,7 @@ def watermarker_logic(files):
 def enhancer_logic(files):
     sharpness = st.slider("Sharpness", 1.0, 5.0, 2.0, 0.1)
 
-    if st.button("Apply Enhancement", type="primary", use_container_width=True):
+    if st.button("Apply Enhancement", type="primary", width='stretch'):
         temp_dir = init_temp_dir()
         processed = []
 
@@ -900,7 +900,7 @@ def enhancer_logic(files):
         for base, path in st.session_state.enhancer_results:
             filename, mime, _ = get_file_meta(base, "enhanced")
             col1, col2 = st.columns([3,1])
-            col1.image(path, caption=filename, use_container_width=True)
+            col1.image(path, caption=filename, width='stretch')
             with Image.open(path) as img:
                 img_data = get_download_data(img)
             col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
@@ -927,7 +927,7 @@ def stats_logic():
     st.divider()
 
     df.columns = ['Tool Name', 'Uses', 'Images Processed']
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
 
 
 # =========================================================
@@ -971,7 +971,7 @@ with st.sidebar:
         st.button(
             label,
             key=f"btn_{key}",
-            use_container_width=True,
+            width='stretch',
             type="primary" if st.session_state.view == key else "secondary",
             on_click=lambda k=key: st.session_state.update(view=k)
         )
