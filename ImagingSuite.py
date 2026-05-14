@@ -66,9 +66,10 @@ TOOL_INFO = {
     'splitter': "Split stitched images into two separate files.",
     'swapper': "Swap the obverse and reverse sides.",
     'cropper': "Manually crop your images.",
-    'corrector': "Adjust brightness, contrast and color.",
+    'corrector': "Adjust brightness, contrast, sharpness, and color.",
     'watermarker': "Apply watermark to all images.",
-    'enhancer': "Apply sharpening filter."
+    'enhancer': "Apply sharpening filter.",
+    'stats': "View usage statistics for the suite."
 }
 
 
@@ -133,231 +134,145 @@ def sanitize_filename(name):
 
 
 def init_temp_dir():
-
     if 'temp_dir' not in st.session_state:
         st.session_state.temp_dir = tempfile.mkdtemp(
             prefix="imaging_suite_"
         )
-
     Path(st.session_state.temp_dir).mkdir(
         parents=True,
         exist_ok=True
     )
-
     return st.session_state.temp_dir
 
 
 def cleanup_temp_dir():
-
     temp_dir = st.session_state.get('temp_dir')
-
     if temp_dir and os.path.exists(temp_dir):
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
-
     st.session_state.pop('temp_dir', None)
 
 
 def clear_processing_state():
-
     keys_to_clear = [
-        'remover_results',
-        'stitcher_results',
-        'swapper_results',
-        'splitter_results',
-        'corrector_results',
-        'watermarker_results',
-        'enhancer_results',
-        'remover_hashes',
-        'stitcher_hashes',
-        'splitter_hashes',
-        'swapper_hashes',
-        'corrector_hashes',
-        'watermarker_hashes',
-        'enhancer_hashes'
+        'remover_results', 'remover_hashes',
+        'stitcher_results', 'stitcher_hashes',
+        'swapper_results', 'swapper_id',
+        'splitter_results', 'splitter_id',
+        'corrector_results', 'corrector_hashes',
+        'watermarker_results', 'watermarker_hashes',
+        'enhancer_results', 'enhancer_hashes'
     ]
-
     for key in keys_to_clear:
         st.session_state.pop(key, None)
-
     cleanup_temp_dir()
     gc.collect()
 
 
 def safe_open_image(file):
-
     try:
         file.seek(0)
-
         if hasattr(file, "size"):
             if file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
                 st.error(f"{file.name} exceeds {MAX_FILE_SIZE_MB}MB")
                 return None
-
         img = Image.open(file)
         img = ImageOps.exif_transpose(img)
-
         return img.copy()
-
     except UnidentifiedImageError:
         st.error(f"Invalid image file: {file.name}")
         return None
-
     except Exception as e:
         st.error(f"Failed opening image {file.name}: {e}")
         return None
 
 
 def safe_save_image(img, path, fmt="PNG"):
-
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-        img.save(
-            path,
-            format=fmt
-        )
-
+        img.save(path, format=fmt)
         return True
-
     except Exception as e:
         st.error(f"Failed saving image: {e}")
         return False
 
 
 def image_hash(file):
-
     file.seek(0)
     data = file.read()
     file.seek(0)
-
     return hashlib.md5(data).hexdigest()
 
 
 def composite_on_white(img):
-
-    if img.mode in ('RGBA', 'LA'):
-
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
         background = Image.new("RGB", img.size, "white")
         background.paste(
             img,
-            mask=img.getchannel('A')
+            mask=img.convert('RGBA').getchannel('A')
         )
-
         return background
-
     return img.convert("RGB")
 
 
 def get_file_meta(base_name, suffix=""):
-
     fmt = st.session_state.get('global_format', 'JPEG')
-
     ext = "jpg" if fmt == "JPEG" else "png"
-
-    mime = (
-        "image/jpeg"
-        if fmt == "JPEG"
-        else "image/png"
-    )
-
+    mime = "image/jpeg" if fmt == "JPEG" else "image/png"
     filename = (
         f"{base_name}_{suffix}.{ext}"
         if suffix
         else f"{base_name}.{ext}"
     )
-
     return filename, mime, fmt
 
 
 def get_download_data(img):
-
-    fmt = st.session_state.get(
-        'global_format',
-        'JPEG'
-    )
-
-    img_to_save = (
-        img if fmt == "PNG"
-        else composite_on_white(img)
-    )
-
+    fmt = st.session_state.get('global_format', 'JPEG')
+    img_to_save = img if fmt == "PNG" else composite_on_white(img)
     buf = io.BytesIO()
-
-    img_to_save.save(
-        buf,
-        format=fmt,
-        quality=95,
-        optimize=True
-    )
-
+    img_to_save.save(buf, format=fmt, quality=95, optimize=True)
     return buf.getvalue()
 
 
-def create_zip_download_button(
-    processed_items,
-    zip_filename_base,
-    default_suffix=""
-):
-
+def create_zip_download_button(processed_items, zip_filename_base, default_suffix=""):
     if not processed_items:
         return
 
-    temp_zip = tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=".zip"
-    )
+    temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
 
-    with zipfile.ZipFile(
-        temp_zip.name,
-        "w",
-        zipfile.ZIP_DEFLATED
-    ) as zipf:
-
+    with zipfile.ZipFile(temp_zip.name, "w", zipfile.ZIP_DEFLATED) as zipf:
         for item in processed_items:
-
             if len(item) == 3:
                 base_name, img_source, suffix = item
             else:
                 base_name, img_source = item
                 suffix = default_suffix
 
-            filename, _, fmt = get_file_meta(
-                base_name,
-                suffix
-            )
+            filename, _, fmt = get_file_meta(base_name, suffix)
 
             try:
-
+                # Handle File Paths (New Logic)
                 if isinstance(img_source, str):
                     with Image.open(img_source) as img:
-
-                        img_to_save = (
-                            img if fmt == "PNG"
-                            else composite_on_white(img)
-                        )
-
+                        img_to_save = img if fmt == "PNG" else composite_on_white(img)
                         img_bytes = io.BytesIO()
-
-                        img_to_save.save(
-                            img_bytes,
-                            format=fmt,
-                            quality=95,
-                            optimize=True
-                        )
-
-                        zipf.writestr(
-                            filename,
-                            img_bytes.getvalue()
-                        )
+                        img_to_save.save(img_bytes, format=fmt, quality=95, optimize=True)
+                        zipf.writestr(filename, img_bytes.getvalue())
+                
+                # Handle Direct PIL Images (For Interactive Splitter/Swapper)
+                elif isinstance(img_source, Image.Image):
+                    img_to_save = img_source if fmt == "PNG" else composite_on_white(img_source)
+                    img_bytes = io.BytesIO()
+                    img_to_save.save(img_bytes, format=fmt, quality=95, optimize=True)
+                    zipf.writestr(filename, img_bytes.getvalue())
 
             except Exception as e:
                 st.error(f"ZIP error: {e}")
 
     with open(temp_zip.name, "rb") as f:
-
         st.download_button(
             label="📦 Download All as ZIP",
             data=f.read(),
@@ -373,7 +288,6 @@ def create_zip_download_button(
 
 
 def info_box(text):
-
     st.markdown(
         f"""
         <div style="
@@ -395,128 +309,103 @@ def info_box(text):
 # =========================================================
 
 def remover_logic(files):
-
     current_hashes = [image_hash(f) for f in files]
 
-    if (
-        st.session_state.get('remover_hashes')
-        != current_hashes
-    ):
+    if st.session_state.get('remover_hashes') != current_hashes:
         st.session_state.pop('remover_results', None)
 
-    if (
-        files
-        and 'remover_results'
-        not in st.session_state
-    ):
-
+    if files and 'remover_results' not in st.session_state:
         temp_dir = init_temp_dir()
-
-        progress = st.progress(
-            0,
-            text="Removing backgrounds..."
-        )
-
+        progress = st.progress(0, text="Removing backgrounds...")
         processed = []
 
         try:
-
             for i, f in enumerate(files):
-
-                progress.progress(
-                    (i + 1) / len(files),
-                    text=f"Processing {f.name}"
-                )
-
+                progress.progress((i + 1) / len(files), text=f"Processing {f.name}")
                 input_bytes = f.getvalue()
 
                 if len(input_bytes) > 20 * 1024 * 1024:
-                    st.warning(
-                        f"{f.name} is large and may be slow."
-                    )
+                    st.warning(f"{f.name} is large and may be slow.")
 
                 output_bytes = remove(input_bytes)
+                img = Image.open(io.BytesIO(output_bytes))
+                
+                # Auto Crop Bounding Box Helper
+                def get_clean_bbox(im, threshold=20):
+                    alpha = im.split()[-1]
+                    return alpha.point(lambda p: p if p > threshold else 0).getbbox()
 
-                img = Image.open(
-                    io.BytesIO(output_bytes)
-                )
-
-                bbox = img.getbbox()
-
+                bbox = get_clean_bbox(img)
                 if bbox:
-                    img = img.crop(bbox)
+                    cropped_full = img.crop(bbox)
+                    w, h = cropped_full.size
+                    
+                    if w > h * 1.3:
+                        mid = w // 2
+                        left_side = cropped_full.crop((0, 0, mid, h))
+                        right_side = cropped_full.crop((mid, 0, w, h))
+                        
+                        left_bbox = get_clean_bbox(left_side)
+                        right_bbox = get_clean_bbox(right_side)
+                        
+                        if left_bbox and right_bbox:
+                            left_side = left_side.crop(left_bbox)
+                            right_side = right_side.crop(right_bbox)
+                            target_h = min(left_side.height, right_side.height)
+                            
+                            if left_side.height != target_h:
+                                left_side = left_side.resize((int(left_side.width * target_h / left_side.height), target_h), Image.Resampling.LANCZOS)
+                            if right_side.height != target_h:
+                                right_side = right_side.resize((int(right_side.width * target_h / right_side.height), target_h), Image.Resampling.LANCZOS)
+                            
+                            stitched = Image.new("RGBA", (left_side.width + right_side.width, target_h))
+                            stitched.paste(left_side, (0, 0))
+                            stitched.paste(right_side, (left_side.width, 0))
+                            img = stitched
+                        elif left_bbox:
+                            img = left_side.crop(left_bbox)
+                        elif right_bbox:
+                            img = right_side.crop(right_bbox)
+                        else:
+                            img = cropped_full
+                    else:
+                        img = cropped_full
 
                 base, _ = os.path.splitext(f.name)
-
                 base = sanitize_filename(base)
-
-                temp_path = os.path.join(
-                    temp_dir,
-                    f"{base}_nobg.png"
-                )
-
-                safe_save_image(
-                    img,
-                    temp_path
-                )
+                temp_path = os.path.join(temp_dir, f"{base}_nobg.png")
+                safe_save_image(img, temp_path)
 
                 processed.append({
                     "base": base,
                     "path": temp_path,
                     "file": f
                 })
-
                 img.close()
-
                 gc.collect()
 
             st.session_state.remover_results = processed
             st.session_state.remover_hashes = current_hashes
-
-            update_stats(
-                'remover',
-                len(files)
-            )
+            update_stats('remover', len(files))
 
         except Exception as e:
-
             st.error(f"Processing failed: {e}")
-
             with st.expander("Technical Details"):
                 st.code(traceback.format_exc())
 
     if 'remover_results' in st.session_state:
-
-        if st.button(
-            "Clear Results",
-            key="clear_remover"
-        ):
+        if st.button("Clear Results", key="clear_remover"):
             clear_processing_state()
             st.rerun()
 
         for item in st.session_state.remover_results:
-
-            filename, mime, _ = get_file_meta(
-                item['base'],
-                "no-bg"
-            )
-
+            filename, mime, _ = get_file_meta(item['base'], "no-bg")
             col1, col2, col3 = st.columns([2,2,1])
-
             original = safe_open_image(item['file'])
 
             if original:
-                col1.image(
-                    original,
-                    caption="Original",
-                    use_container_width=True
-                )
-
-            col2.image(
-                item['path'],
-                caption="Processed",
-                use_container_width=True
-            )
+                col1.image(original, caption="Original", use_container_width=True)
+            col2.image(item['path'], caption="Processed", use_container_width=True)
 
             with Image.open(item['path']) as img:
                 img_data = get_download_data(img)
@@ -528,19 +417,10 @@ def remover_logic(files):
                 mime=mime,
                 key=f"download_{item['base']}"
             )
-
             st.divider()
 
-        zip_items = [
-            (x['base'], x['path'])
-            for x in st.session_state.remover_results
-        ]
-
-        create_zip_download_button(
-            zip_items,
-            "removed_backgrounds",
-            "no-bg"
-        )
+        zip_items = [(x['base'], x['path']) for x in st.session_state.remover_results]
+        create_zip_download_button(zip_items, "removed_backgrounds", "no-bg")
 
 
 # =========================================================
@@ -548,163 +428,282 @@ def remover_logic(files):
 # =========================================================
 
 def stitcher_logic(files):
-
     if len(files) % 2 != 0:
-        st.warning(
-            "Upload even number of images."
-        )
+        st.warning("Upload an even number of images.")
         return
 
+    files.sort(key=lambda f: f.name)
     resize_option = st.radio(
         "Resize Mode",
-        [
-            "Make smaller image match larger",
-            "Make larger image match smaller"
-        ],
+        ["Make smaller image match larger", "Make larger image match smaller"],
+        index=1,
         horizontal=True
     )
 
-    pairs = [
-        (files[i], files[i+1])
-        for i in range(0, len(files), 2)
-    ]
+    pairs = [(files[i], files[i+1]) for i in range(0, len(files), 2)]
+    
+    st.write("### Image Pairs Preview")
+    for i, (f1, f2) in enumerate(pairs):
+        c1, c2 = st.columns(2)
+        c1.image(f1, caption=f1.name, use_container_width=True)
+        c2.image(f2, caption=f2.name, use_container_width=True)
+    st.divider()
 
-    if st.button(
-        "Process All Pairs",
-        type="primary",
-        use_container_width=True
-    ):
-
+    if st.button("Process All Pairs", type="primary", use_container_width=True):
         temp_dir = init_temp_dir()
-
         processed = []
 
         try:
-
             for f1, f2 in pairs:
-
-                img1 = safe_open_image(f1)
-                img2 = safe_open_image(f2)
+                img1 = composite_on_white(safe_open_image(f1))
+                img2 = composite_on_white(safe_open_image(f2))
 
                 if not img1 or not img2:
                     continue
 
-                img1 = composite_on_white(img1)
-                img2 = composite_on_white(img2)
-
-                h1 = img1.height
-                h2 = img2.height
-
-                target_h = (
-                    max(h1, h2)
-                    if resize_option.startswith("Make smaller")
-                    else min(h1, h2)
-                )
+                h1, h2 = img1.height, img2.height
+                target_h = max(h1, h2) if resize_option.startswith("Make smaller") else min(h1, h2)
 
                 if img1.height != target_h:
-
-                    img1 = img1.resize(
-                        (
-                            int(img1.width * target_h / h1),
-                            target_h
-                        ),
-                        Image.Resampling.LANCZOS
-                    )
-
+                    img1 = img1.resize((int(img1.width * target_h / h1), target_h), Image.Resampling.LANCZOS)
                 if img2.height != target_h:
+                    img2 = img2.resize((int(img2.width * target_h / h2), target_h), Image.Resampling.LANCZOS)
 
-                    img2 = img2.resize(
-                        (
-                            int(img2.width * target_h / h2),
-                            target_h
-                        ),
-                        Image.Resampling.LANCZOS
-                    )
-
-                stitched = Image.new(
-                    "RGB",
-                    (
-                        img1.width + img2.width,
-                        target_h
-                    )
-                )
-
+                stitched = Image.new("RGB", (img1.width + img2.width, target_h))
                 stitched.paste(img1, (0,0))
                 stitched.paste(img2, (img1.width,0))
 
                 base, _ = os.path.splitext(f1.name)
-
                 base = sanitize_filename(base)
+                temp_path = os.path.join(temp_dir, f"{base}_stitched.png")
+                safe_save_image(stitched, temp_path)
 
-                temp_path = os.path.join(
-                    temp_dir,
-                    f"{base}_stitched.png"
-                )
-
-                safe_save_image(
-                    stitched,
-                    temp_path
-                )
-
-                processed.append(
-                    (base, temp_path)
-                )
-
-                img1.close()
-                img2.close()
-                stitched.close()
-
+                processed.append((base, temp_path))
+                img1.close(); img2.close(); stitched.close()
                 gc.collect()
 
             st.session_state.stitcher_results = processed
-
-            update_stats(
-                'stitcher',
-                len(files)
-            )
+            update_stats('stitcher', len(files))
 
         except Exception as e:
-
             st.error(f"Processing failed: {e}")
 
-            with st.expander("Technical Details"):
-                st.code(traceback.format_exc())
-
     if 'stitcher_results' in st.session_state:
-
         for base, path in st.session_state.stitcher_results:
-
-            filename, mime, _ = get_file_meta(
-                base,
-                "stitched"
-            )
-
+            filename, mime, _ = get_file_meta(base, "stitched")
             col1, col2 = st.columns([3,1])
-
-            col1.image(
-                path,
-                caption=filename,
-                use_container_width=True
-            )
-
+            col1.image(path, caption=filename, use_container_width=True)
             with Image.open(path) as img:
                 img_data = get_download_data(img)
+            col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
+            st.divider()
 
-            col2.download_button(
-                "Download",
-                data=img_data,
-                file_name=filename,
+        create_zip_download_button(st.session_state.stitcher_results, "stitched_coins", "stitched")
+
+
+# =========================================================
+# SPLITTER
+# =========================================================
+
+def splitter_logic(files):
+    def _run_split(idx):
+        item = st.session_state.splitter_results[idx]
+        slider_key = item['file_ref'].file_id
+        mid = st.session_state[slider_key]
+        
+        image = item['original']
+        w, h = image.size
+        
+        part_a = image.crop((0, 0, mid, h))
+        part_b = image.crop((mid, 0, w, h))
+
+        st.session_state.splitter_results[idx]['processed_a'] = part_a
+        st.session_state.splitter_results[idx]['processed_b'] = part_b
+
+    current_files_id = [f.file_id for f in files] if files else None
+
+    if 'splitter_id' in st.session_state and st.session_state.splitter_id != current_files_id:
+        st.session_state.pop('splitter_results', None)
+        st.session_state.pop('splitter_id', None)
+
+    if files and 'splitter_results' not in st.session_state:
+        processed_images = []
+        for f in files:
+            image = safe_open_image(f)
+            if not image: continue
+            
+            base = sanitize_filename(os.path.splitext(f.name)[0])
+            w, h = image.size
+            mid_default = w // 2
+
+            part_a_default = image.crop((0, 0, mid_default, h))
+            part_b_default = image.crop((mid_default, 0, w, h))
+
+            processed_images.append({
+                'original': image,
+                'processed_a': part_a_default,
+                'processed_b': part_b_default, 
+                'base_name': base,
+                'file_ref': f
+            })
+            
+        st.session_state.splitter_results = processed_images
+        st.session_state.splitter_id = current_files_id
+        update_stats('splitter', len(files))
+
+    if 'splitter_results' in st.session_state:
+        st.subheader("Interactive Splitter Results")
+        if st.button("Clear Results", key="clear_splitter"):
+            st.session_state.pop('splitter_results', None)
+            st.session_state.pop('splitter_id', None)
+            st.rerun()
+
+        for idx, item in enumerate(st.session_state.splitter_results):
+            original_image = item['original']
+            part_a = item['processed_a'] 
+            part_b = item['processed_b'] 
+            base = item['base_name']
+            w, h = original_image.size
+            
+            filename_a, mime_a, _ = get_file_meta(base, "a")
+            filename_b, mime_b, _ = get_file_meta(base, "b")
+            
+            st.write(f"**Processing:** `{base}`")
+            st.slider(
+                "Adjust split point", 1, w - 1, w // 2,
+                key=item['file_ref'].file_id,
+                on_change=_run_split, 
+                args=(idx,)
+            )
+            
+            st.image(original_image, caption="Original", use_container_width=True)
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image(part_a, caption=filename_a, use_container_width=True)
+                img_data_a = get_download_data(part_a)
+                st.download_button(
+                    label=f"Download A",
+                    data=img_data_a,
+                    file_name=filename_a,
+                    mime=mime_a,
+                    use_container_width=True,
+                    key=f"download_a_{base}"
+                )
+            with col2:
+                st.image(part_b, caption=filename_b, use_container_width=True)
+                img_data_b = get_download_data(part_b)
+                st.download_button(
+                    label=f"Download B",
+                    data=img_data_b,
+                    file_name=filename_b,
+                    mime=mime_b,
+                    use_container_width=True,
+                    key=f"download_b_{base}"
+                )
+            st.divider()
+            
+        final_processed = []
+        for item in st.session_state.splitter_results:
+            if item['processed_a']:
+                final_processed.append((item['base_name'], item['processed_a'], "a"))
+            if item['processed_b']:
+                final_processed.append((item['base_name'], item['processed_b'], "b"))
+        
+        create_zip_download_button(final_processed, "split_coins")
+
+
+# =========================================================
+# SWAPPER
+# =========================================================
+
+def swapper_logic(files):
+    def _run_swap(idx):
+        item = st.session_state.swapper_results[idx]
+        slider_key = item['file_ref'].file_id
+        mid = st.session_state[slider_key]
+        
+        image = item['original']
+        w, h = image.size
+        
+        obv, rev = image.crop((0, 0, mid, h)), image.crop((mid, 0, w, h))
+
+        new_img = Image.new("RGB", (w, h), color='white')
+        new_img.paste(rev, (0, 0), rev if 'A' in rev.getbands() else None)
+        new_img.paste(obv, (rev.width, 0), obv if 'A' in obv.getbands() else None)
+        
+        st.session_state.swapper_results[idx]['processed'] = new_img
+
+    current_files_id = [f.file_id for f in files] if files else None
+
+    if 'swapper_id' in st.session_state and st.session_state.swapper_id != current_files_id:
+        st.session_state.pop('swapper_results', None)
+        st.session_state.pop('swapper_id', None)
+
+    if files and 'swapper_results' not in st.session_state:
+        processed_images = []
+        for f in files:
+            image = safe_open_image(f)
+            if not image: continue
+
+            base = sanitize_filename(os.path.splitext(f.name)[0])
+            w, h = image.size
+            mid_default = w // 2
+            obv_default, rev_default = image.crop((0, 0, mid_default, h)), image.crop((mid_default, 0, w, h))
+            
+            new_img_default = Image.new("RGB", (w, h), color='white')
+            new_img_default.paste(rev_default, (0, 0), rev_default if 'A' in rev_default.getbands() else None)
+            new_img_default.paste(obv_default, (rev_default.width, 0), obv_default if 'A' in obv_default.getbands() else None)
+
+            processed_images.append({
+                'original': image, 
+                'processed': new_img_default,
+                'base_name': base, 
+                'file_ref': f
+            })
+            
+        st.session_state.swapper_results = processed_images
+        st.session_state.swapper_id = current_files_id
+        update_stats('swapper', len(files))
+
+    if 'swapper_results' in st.session_state:
+        st.subheader("Interactive Swapper Results")
+        if st.button("Clear Results", key="clear_swapper"):
+            st.session_state.pop('swapper_results', None)
+            st.session_state.pop('swapper_id', None)
+            st.rerun()
+
+        for idx, item in enumerate(st.session_state.swapper_results):
+            image = item['original']
+            processed_image = item['processed'] 
+            base = item['base_name']
+            w, h = image.size
+            
+            filename, mime, fmt = get_file_meta(base, "swapped")
+            st.write(f"**Processing:** `{base}`")
+            
+            mid = st.slider(
+                "Adjust split point", 1, w - 1, w // 2, 
+                key=item['file_ref'].file_id,
+                on_change=_run_swap,
+                args=(idx,)
+            )
+            
+            col1, col2, col3 = st.columns([2, 2, 1])
+            col1.image(image, caption="Original", use_container_width=True) 
+            col2.image(processed_image, caption="Swapped", use_container_width=True)
+
+            img_data = get_download_data(processed_image)
+            col3.download_button(
+                label="Download", 
+                data=img_data, 
+                file_name=filename, 
                 mime=mime,
                 key=f"download_{base}"
             )
-
             st.divider()
-
-        create_zip_download_button(
-            st.session_state.stitcher_results,
-            "stitched_coins",
-            "stitched"
-        )
+            
+        final_processed = [(item['base_name'], item['processed']) for item in st.session_state.swapper_results if item['processed']]
+        create_zip_download_button(final_processed, "swapped_coins", "swapped")
 
 
 # =========================================================
@@ -712,37 +711,16 @@ def stitcher_logic(files):
 # =========================================================
 
 def cropper_logic(files):
-
-    if not files:
-        return
-
-    selected = st.selectbox(
-        "Choose image",
-        [f.name for f in files]
-    )
-
-    file = next(
-        x for x in files
-        if x.name == selected
-    )
-
+    if not files: return
+    selected = st.selectbox("Choose image", [f.name for f in files])
+    file = next(x for x in files if x.name == selected)
     img = safe_open_image(file)
 
-    if img is None:
-        return
+    if img is None: return
 
-    aspect_ratios = {
-        "Free": None,
-        "1:1": (1,1),
-        "16:9": (16,9),
-        "4:3": (4,3),
-        "3:2": (3,2)
-    }
-
-    aspect = st.selectbox(
-        "Aspect Ratio",
-        list(aspect_ratios.keys())
-    )
+    aspect_ratios = {"Free": None, "1:1": (1,1), "16:9": (16,9), "4:3": (4,3), "3:2": (3,2), "9:16": (9,16), "3:4": (3,4), "2:3": (2,3)}
+    aspect = st.selectbox("Aspect Ratio", list(aspect_ratios.keys()))
+    st.info("Drag the corners of the box to crop your image.")
 
     cropped = st_cropper(
         img,
@@ -751,19 +729,9 @@ def cropper_logic(files):
         key=f"cropper_{file.name}"
     )
 
-    st.image(
-        cropped,
-        caption="Cropped Result",
-        use_container_width=True
-    )
-
+    st.image(cropped, caption="Cropped Result", use_container_width=True)
     base, _ = os.path.splitext(file.name)
-
-    filename, mime, _ = get_file_meta(
-        base,
-        "cropped"
-    )
-
+    filename, mime, _ = get_file_meta(base, "cropped")
     img_data = get_download_data(cropped)
 
     st.download_button(
@@ -776,112 +744,168 @@ def cropper_logic(files):
 
 
 # =========================================================
+# CORRECTOR
+# =========================================================
+
+def corrector_logic(files):
+    st.subheader("Correction Settings")
+    brightness = st.slider("Brightness", 0.5, 1.5, 1.0)
+    contrast = st.slider("Contrast", 0.5, 1.5, 1.0)
+    sharpness = st.slider("Sharpness", 0.0, 3.0, 1.0)
+    saturation = st.slider("Saturation (Color)", 0.0, 2.0, 1.0)
+
+    if st.button("Apply Corrections", type="primary", use_container_width=True):
+        temp_dir = init_temp_dir()
+        processed = []
+
+        try:
+            for f in files:
+                img = safe_open_image(f)
+                if img is None: continue
+
+                corrected = composite_on_white(img)
+                corrected = ImageEnhance.Brightness(corrected).enhance(brightness)
+                corrected = ImageEnhance.Contrast(corrected).enhance(contrast)
+                corrected = ImageEnhance.Sharpness(corrected).enhance(sharpness)
+                corrected = ImageEnhance.Color(corrected).enhance(saturation)
+
+                base = sanitize_filename(os.path.splitext(f.name)[0])
+                temp_path = os.path.join(temp_dir, f"{base}_corrected.png")
+                safe_save_image(corrected, temp_path)
+                
+                processed.append((base, temp_path))
+                img.close(); corrected.close()
+                gc.collect()
+
+            st.session_state.corrector_results = processed
+            update_stats('corrector', len(files))
+
+        except Exception as e:
+            st.error(f"Processing failed: {e}")
+
+    if 'corrector_results' in st.session_state:
+        for base, path in st.session_state.corrector_results:
+            filename, mime, _ = get_file_meta(base, "corrected")
+            col1, col2 = st.columns([3,1])
+            col1.image(path, caption=filename, use_container_width=True)
+            with Image.open(path) as img:
+                img_data = get_download_data(img)
+            col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
+
+        create_zip_download_button(st.session_state.corrector_results, "corrected_images", "corrected")
+
+
+# =========================================================
+# WATERMARKER
+# =========================================================
+
+def watermarker_logic(files):
+    st.subheader("Watermark Settings")
+    watermark_file = st.file_uploader("Upload watermark (PNG)", type=["png"])
+
+    if watermark_file:
+        watermark_img = Image.open(watermark_file).convert("RGBA")
+        pos_map = {"Center": (0.5, 0.5), "Top Left": (0, 0), "Top Right": (1, 0), "Bottom Left": (0, 1), "Bottom Right": (1, 1)}
+        
+        c1, c2, c3 = st.columns(3)
+        pos = c1.selectbox("Position", list(pos_map.keys()))
+        scale = c2.slider("Scale %", 10, 100, 25)
+        opacity = c3.slider("Opacity %", 0, 100, 50)
+
+        if st.button("Apply Watermark", type="primary", use_container_width=True):
+            temp_dir = init_temp_dir()
+            processed = []
+
+            try:
+                for f in files:
+                    original = safe_open_image(f)
+                    if original is None: continue
+                    
+                    original = original.convert("RGBA")
+                    wm_w, wm_h = watermark_img.size
+                    base_w = int(original.width * (scale / 100))
+                    wm_resized = watermark_img.resize((base_w, int(wm_h * base_w / wm_w)), Image.Resampling.LANCZOS)
+                    
+                    if opacity < 100:
+                        alpha = wm_resized.split()[3]
+                        alpha = ImageEnhance.Brightness(alpha).enhance(opacity / 100)
+                        wm_resized.putalpha(alpha)
+                        
+                    px, py = pos_map[pos]
+                    pos_x = int(original.width * px - wm_resized.width * px)
+                    pos_y = int(original.height * py - wm_resized.height * py)
+                    
+                    transparent = Image.new('RGBA', original.size, (0,0,0,0))
+                    transparent.paste(original, (0,0))
+                    transparent.paste(wm_resized, (pos_x, pos_y), mask=wm_resized)
+
+                    base = sanitize_filename(os.path.splitext(f.name)[0])
+                    temp_path = os.path.join(temp_dir, f"{base}_watermarked.png")
+                    safe_save_image(transparent, temp_path)
+                    
+                    processed.append((base, temp_path))
+                    original.close(); transparent.close()
+                    gc.collect()
+
+                st.session_state.watermarker_results = processed
+                update_stats('watermarker', len(files))
+
+            except Exception as e:
+                st.error(f"Processing failed: {e}")
+
+    if 'watermarker_results' in st.session_state:
+        for base, path in st.session_state.watermarker_results:
+            filename, mime, _ = get_file_meta(base, "watermarked")
+            col1, col2 = st.columns([3,1])
+            col1.image(path, caption=filename, use_container_width=True)
+            with Image.open(path) as img:
+                img_data = get_download_data(img)
+            col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
+
+        create_zip_download_button(st.session_state.watermarker_results, "watermarked_images", "watermarked")
+
+
+# =========================================================
 # ENHANCER
 # =========================================================
 
 def enhancer_logic(files):
+    sharpness = st.slider("Sharpness", 1.0, 5.0, 2.0, 0.1)
 
-    sharpness = st.slider(
-        "Sharpness",
-        1.0,
-        5.0,
-        2.0,
-        0.1
-    )
-
-    if st.button(
-        "Apply Enhancement",
-        type="primary",
-        use_container_width=True
-    ):
-
+    if st.button("Apply Enhancement", type="primary", use_container_width=True):
         temp_dir = init_temp_dir()
-
         processed = []
 
         try:
-
             for f in files:
-
                 img = safe_open_image(f)
+                if img is None: continue
 
-                if img is None:
-                    continue
-
-                enhanced = ImageEnhance.Sharpness(
-                    composite_on_white(img)
-                ).enhance(sharpness)
-
-                base, _ = os.path.splitext(f.name)
-
-                base = sanitize_filename(base)
-
-                temp_path = os.path.join(
-                    temp_dir,
-                    f"{base}_enhanced.png"
-                )
-
-                safe_save_image(
-                    enhanced,
-                    temp_path
-                )
-
-                processed.append(
-                    (base, temp_path)
-                )
-
-                img.close()
-                enhanced.close()
-
+                enhanced = ImageEnhance.Sharpness(composite_on_white(img)).enhance(sharpness)
+                base = sanitize_filename(os.path.splitext(f.name)[0])
+                temp_path = os.path.join(temp_dir, f"{base}_enhanced.png")
+                safe_save_image(enhanced, temp_path)
+                
+                processed.append((base, temp_path))
+                img.close(); enhanced.close()
                 gc.collect()
 
             st.session_state.enhancer_results = processed
-
-            update_stats(
-                'enhancer',
-                len(files)
-            )
+            update_stats('enhancer', len(files))
 
         except Exception as e:
-
             st.error(f"Processing failed: {e}")
 
-            with st.expander("Technical Details"):
-                st.code(traceback.format_exc())
-
     if 'enhancer_results' in st.session_state:
-
         for base, path in st.session_state.enhancer_results:
-
-            filename, mime, _ = get_file_meta(
-                base,
-                "enhanced"
-            )
-
+            filename, mime, _ = get_file_meta(base, "enhanced")
             col1, col2 = st.columns([3,1])
-
-            col1.image(
-                path,
-                caption=filename,
-                use_container_width=True
-            )
-
+            col1.image(path, caption=filename, use_container_width=True)
             with Image.open(path) as img:
                 img_data = get_download_data(img)
+            col2.download_button("Download", data=img_data, file_name=filename, mime=mime, key=f"download_{base}")
 
-            col2.download_button(
-                "Download",
-                data=img_data,
-                file_name=filename,
-                mime=mime,
-                key=f"download_{base}"
-            )
-
-        create_zip_download_button(
-            st.session_state.enhancer_results,
-            "enhanced_images",
-            "enhanced"
-        )
+        create_zip_download_button(st.session_state.enhancer_results, "enhanced_images", "enhanced")
 
 
 # =========================================================
@@ -889,42 +913,21 @@ def enhancer_logic(files):
 # =========================================================
 
 def stats_logic():
-
     df = get_stats()
-
     if df.empty:
         st.info("No statistics yet.")
         return
 
     total_uses = df['uses'].sum()
-
     total_images = df['images_processed'].sum()
 
     col1, col2 = st.columns(2)
-
-    col1.metric(
-        "Total Tool Executions",
-        total_uses
-    )
-
-    col2.metric(
-        "Images Processed",
-        total_images
-    )
-
+    col1.metric("Total Tool Executions", total_uses)
+    col2.metric("Images Processed", total_images)
     st.divider()
 
-    df.columns = [
-        'Tool Name',
-        'Uses',
-        'Images Processed'
-    ]
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
+    df.columns = ['Tool Name', 'Uses', 'Images Processed']
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 # =========================================================
@@ -934,7 +937,11 @@ def stats_logic():
 tool_logic_map = {
     'remover': remover_logic,
     'stitcher': stitcher_logic,
+    'splitter': splitter_logic,
+    'swapper': swapper_logic,
     'cropper': cropper_logic,
+    'corrector': corrector_logic,
+    'watermarker': watermarker_logic,
     'enhancer': enhancer_logic,
     'stats': stats_logic
 }
@@ -945,37 +952,28 @@ tool_logic_map = {
 # =========================================================
 
 with st.sidebar:
-
     logo_path = "logo.png"
-
     if os.path.exists(logo_path):
         st.image(logo_path)
-
     st.divider()
 
     st.session_state.global_format = st.selectbox(
         "Download Format",
-        ["JPEG", "PNG"]
+        ["JPEG", "PNG"],
+        format_func=lambda x: "PNG (Supports Transparency)" if x == "PNG" else "JPG (Composited on White)"
     )
-
     st.divider()
 
     if 'view' not in st.session_state:
         st.session_state.view = 'remover'
 
     for key, label in TOOL_PAGES.items():
-
         st.button(
             label,
             key=f"btn_{key}",
             use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state.view == key
-                else "secondary"
-            ),
-            on_click=lambda k=key:
-                st.session_state.update(view=k)
+            type="primary" if st.session_state.view == key else "secondary",
+            on_click=lambda k=key: st.session_state.update(view=k)
         )
 
 
@@ -983,16 +981,12 @@ with st.sidebar:
 # MAIN
 # =========================================================
 
-current_view = st.session_state.get(
-    'view',
-    'remover'
-)
+current_view = st.session_state.get('view', 'remover')
 
 if st.session_state.get('last_view') != current_view:
     clear_processing_state()
 
 st.session_state.last_view = current_view
-
 st.title(TOOL_PAGES[current_view])
 
 if current_view in TOOL_INFO:
@@ -1001,17 +995,14 @@ if current_view in TOOL_INFO:
 tool_function = tool_logic_map[current_view]
 
 if current_view != 'stats':
-
     uploaded_files = st.file_uploader(
         "Upload Images",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
         key=current_view
     )
-
     if uploaded_files:
         tool_function(uploaded_files)
-
 else:
     tool_function()
 
