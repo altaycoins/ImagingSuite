@@ -304,42 +304,7 @@ def info_box(text):
         unsafe_allow_html=True
     )
 
-def debug_temp_storage():
-    st.divider()
-    st.subheader("🛠️ System Storage Monitor")
-    
-    base_temp = tempfile.gettempdir()
-    
-    app_temps = [
-        d for d in os.listdir(base_temp) 
-        if d.startswith("imaging_suite_")
-    ]
-    
-    if not app_temps:
-        st.success("The temp folder is perfectly clean. No orphaned files!")
-        return
-        
-    st.warning(f"Found {len(app_temps)} active temp folders.")
-    
-    for d in app_temps:
-        full_path = os.path.join(base_temp, d)
-        try:
-            total_size = sum(
-                os.path.getsize(os.path.join(dirpath, filename)) 
-                for dirpath, _, filenames in os.walk(full_path) 
-                for filename in filenames
-            )
-            st.code(f"{d}  ->  {total_size / (1024 * 1024):.2f} MB")
-        except Exception as e:
-            st.error(f"Could not read {d}: {e}")
-            
-    if st.button("Force Clean System Temp", type="primary"):
-        for d in app_temps:
-            try:
-                shutil.rmtree(os.path.join(base_temp, d), ignore_errors=True)
-            except Exception:
-                pass
-        st.rerun()
+
 # =========================================================
 # REMOVER
 # =========================================================
@@ -948,24 +913,67 @@ def enhancer_logic(files):
 # STATISTICS
 # =========================================================
 
+# =========================================================
+# STATISTICS
+# =========================================================
+
 def stats_logic():
     df = get_stats()
+    
+    # We still want to see the monitor even if the database is empty!
     if df.empty:
         st.info("No statistics yet.")
-        return
+    else:
+        total_uses = df['uses'].sum()
+        total_images = df['images_processed'].sum()
 
-    total_uses = df['uses'].sum()
-    total_images = df['images_processed'].sum()
+        col1, col2 = st.columns(2)
+        col1.metric("Total Tool Executions", total_uses)
+        col2.metric("Images Processed", total_images)
+        st.divider()
 
-    col1, col2 = st.columns(2)
-    col1.metric("Total Tool Executions", total_uses)
-    col2.metric("Images Processed", total_images)
+        df.columns = ['Tool Name', 'Uses', 'Images Processed']
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # Call the monitor right here so it renders at the bottom of the page
+    debug_temp_storage()
+
+def debug_temp_storage():
     st.divider()
-
-    df.columns = ['Tool Name', 'Uses', 'Images Processed']
-    st.dataframe(df, width='stretch', hide_index=True)
-
-
+    st.subheader("🛠️ System Storage Monitor")
+    
+    base_temp = tempfile.gettempdir()
+    
+    app_temps = [
+        d for d in os.listdir(base_temp) 
+        if d.startswith("imaging_suite_")
+    ]
+    
+    if not app_temps:
+        st.success("The temp folder is perfectly clean. No orphaned files!")
+        return
+        
+    st.warning(f"Found {len(app_temps)} active temp folders.")
+    
+    for d in app_temps:
+        full_path = os.path.join(base_temp, d)
+        try:
+            total_size = sum(
+                os.path.getsize(os.path.join(dirpath, filename)) 
+                for dirpath, _, filenames in os.walk(full_path) 
+                for filename in filenames
+            )
+            st.code(f"{d}  ->  {total_size / (1024 * 1024):.2f} MB")
+        except Exception as e:
+            st.error(f"Could not read {d}: {e}")
+            
+    if st.button("Force Clean System Temp", type="primary"):
+        for d in app_temps:
+            try:
+                shutil.rmtree(os.path.join(base_temp, d), ignore_errors=True)
+            except Exception:
+                pass
+        st.rerun() 
 # =========================================================
 # TOOL MAP
 # =========================================================
