@@ -18,6 +18,7 @@ import pandas as pd
 import hashlib
 import traceback
 import atexit
+import tempfile
 
 from pathlib import Path
 from contextlib import contextmanager
@@ -303,7 +304,42 @@ def info_box(text):
         unsafe_allow_html=True
     )
 
-
+def debug_temp_storage():
+    st.divider()
+    st.subheader("🛠️ System Storage Monitor")
+    
+    base_temp = tempfile.gettempdir()
+    
+    app_temps = [
+        d for d in os.listdir(base_temp) 
+        if d.startswith("imaging_suite_")
+    ]
+    
+    if not app_temps:
+        st.success("The temp folder is perfectly clean. No orphaned files!")
+        return
+        
+    st.warning(f"Found {len(app_temps)} active temp folders.")
+    
+    for d in app_temps:
+        full_path = os.path.join(base_temp, d)
+        try:
+            total_size = sum(
+                os.path.getsize(os.path.join(dirpath, filename)) 
+                for dirpath, _, filenames in os.walk(full_path) 
+                for filename in filenames
+            )
+            st.code(f"{d}  ->  {total_size / (1024 * 1024):.2f} MB")
+        except Exception as e:
+            st.error(f"Could not read {d}: {e}")
+            
+    if st.button("Force Clean System Temp", type="primary"):
+        for d in app_temps:
+            try:
+                shutil.rmtree(os.path.join(base_temp, d), ignore_errors=True)
+            except Exception:
+                pass
+        st.rerun()
 # =========================================================
 # REMOVER
 # =========================================================
