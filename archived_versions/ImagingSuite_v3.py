@@ -77,7 +77,6 @@ TOOL_PAGES = {
     'splitter':   "🔪 Splitter",
     'swapper':    "🔄 Swapper",
     'stacker':    "📐 Stacker",
-    'upscaler':   "🔬 Upscaler",
     'cropper':    "✂️ Cropper",
     'corrector':  "🎨 Corrector",
     'watermarker':"💧 Watermarker",
@@ -91,7 +90,6 @@ TOOL_INFO = {
     'splitter':   "Split stitched images into two separate files.",
     'swapper':    "Swap the obverse and reverse sides.",
     'stacker':    "Split a side-by-side coin image and stack obverse on top of reverse (or reverse on top). Fine-tune the cut point with the slider. Width mismatches are padded with white.",
-    'upscaler':   "AI super-resolution upscaling — adds real detail and sharpness using neural networks. Choose your model and scale. Use 2× for manuscripts to preserve aged textures; 4× for coins to maximise sharpness.",
     'cropper':    "Manually crop your images.",
     'corrector':  "Adjust brightness, contrast, sharpness, and color.",
     'watermarker':"Apply watermark to all images.",
@@ -151,6 +149,7 @@ init_db()
 def sanitize_filename(name):
     name = os.path.basename(name)
     name = re.sub(r'[\\/*?:"<>|\n\r\t]', "", name)
+    name = re.sub(r'\s+', '_', name)
     return name[:150]
 
 def init_temp_dir():
@@ -183,7 +182,6 @@ def clear_processing_state():
         'swapper_results', 'swapper_id',
         'splitter_results', 'splitter_id',
         'stacker_results', 'stacker_id',
-        'upscaler_results', 'upscaler_hashes',
         'corrector_results', 'corrector_hashes',
         'watermarker_results', 'watermarker_hashes',
         'enhancer_results', 'enhancer_hashes'
@@ -235,7 +233,7 @@ def get_file_meta(base_name, suffix=""):
     fmt = st.session_state.get('global_format', 'JPEG')
     ext = "jpg" if fmt == "JPEG" else "png"
     mime = "image/jpeg" if fmt == "JPEG" else "image/png"
-    filename = f"{base_name}.{ext}"
+    filename = f"{base_name}_{suffix}.{ext}" if suffix else f"{base_name}.{ext}"
     return filename, mime, fmt
 
 def get_download_data(img):
@@ -889,178 +887,6 @@ def stacker_logic(files):
 
 
 # =========================================================
-# UPSCALER
-# =========================================================
-
-def _pil_upscale(img, scale, mode, sharpness, denoise):
-    from PIL import ImageFilter
-
-    img = img.convert("RGB")
-    w, h = img.size
-
-    if denoise:
-        img = img.filter(ImageFilter.GaussianBlur(radius=0.4))
-
-    if scale <= 2:
-        up = img.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
-    else:
-        mid = img.resize((w * 2, h * 2), Image.Resampling.LANCZOS)
-        up  = mid.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
-        mid.close()
-
-    if mode == "Coin / metallic":
-        up = up.filter(ImageFilter.UnsharpMask(
-            radius=1.2, percent=int(sharpness * 180), threshold=2
-        ))
-    else:
-        up = up.filter(ImageFilter.UnsharpMask(
-            radius=0.8, percent=int(sharpness * 90), threshold=3
-        ))
-    return up
-
-
-def upscaler_logic(files):
-    st.subheader("Upscaler Settings")
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        mode = st.radio(
-            "Image type",
-            ["Coin / metallic", "Manuscript / paper"],
-            horizontal=True,
-            help="Coins: stronger edge sharpening. Manuscripts: gentler pass to preserve aged texture.",
-        )
-
-    with col_b:
-        scale = st.radio(
-            "Upscale factor",
-            [2, 4, 8],
-            format_func=lambda x: f"{x}×",
-            horizontal=True,
-        )
-
-    sharpness = st.slider(
-        "Post-upscale sharpness",
-        0.0, 1.0, 0.6, 0.05,
-        help="0 = very soft · 1 = maximum crisp. Coins ~0.6–0.8, manuscripts ~0.3–0.5.",
-    )
-
-    denoise = st.checkbox(
-        "Pre-denoise  (reduce grain before upscaling)",
-        value=(mode == "Manuscript / paper"),
-        help="Subtle blur before upscaling so grain and noise don't get enlarged. Recommended for manuscripts.",
-    )
-
-    if scale == 8:
-        st.warning(
-            "⚠️ 8× is very large — a 500×500 px image becomes 4000×4000 px. "
-            "Processing may be slow on large files."
-        )
-    if scale >= 4 and mode == "Manuscript / paper":
-        st.info(
-            "ℹ️ For manuscripts, 2× usually gives the best balance — "
-            "large factors can make craquelure and aged pigment look artificial."
-        )
-
-    st.caption(
-        "Multi-step Lanczos resampling with tuned unsharp masking. "
-        "Runs entirely in memory — no downloads, no GPU needed."
-    )
-
-    if st.button("🔬 Apply Upscaling", type="primary", use_container_width=True):
-        current_hashes = [image_hash(f) for f in files]
-        temp_dir  = init_temp_dir()
-        processed = []
-        progress  = st.progress(0, text="Upscaling images…")
-
-        try:
-            for i, f in enumerate(files):
-                progress.progress((i + 1) / len(files), text=f"Upscaling {f.name}…")
-
-                img = safe_open_image(f)
-                if img is None:
-                    continue
-
-                w, h    = img.size
-                out_mpx = (w * scale * h * scale) / 1_000_000
-                if out_mpx > 150:
-                    st.warning(
-                        f"**{f.name}:** output ~{out_mpx:.0f} MP "
-                        f"({w*scale}×{h*scale} px) — may take a moment."
-                    )
-
-                upscaled  = _pil_upscale(img, scale, mode, sharpness, denoise)
-                base      = sanitize_filename(os.path.splitext(f.name)[0])
-                temp_path = os.path.join(temp_dir, f"{base}_upscaled_{scale}x.png")
-                safe_save_image(upscaled, temp_path)
-
-                processed.append({
-                    "base":      base,
-                    "path":      temp_path,
-                    "file":      f,
-                    "scale":     scale,
-                    "orig_size": (w, h),
-                    "new_size":  upscaled.size,
-                })
-
-                img.close(); upscaled.close()
-                gc.collect()
-
-            st.session_state.upscaler_results = processed
-            st.session_state.upscaler_hashes  = current_hashes
-            update_stats("upscaler", len(files))
-
-        except Exception as e:
-            st.error(f"Upscaling failed: {e}")
-        finally:
-            progress.empty()
-
-    # ── Results ──────────────────────────────────────────────────────────────────
-    if "upscaler_results" not in st.session_state:
-        return
-
-    if st.button("Clear Results", key="clear_upscaler"):
-        st.session_state.pop("upscaler_results", None)
-        st.session_state.pop("upscaler_hashes",  None)
-        clear_processing_state()
-        st.rerun()
-
-    for item in st.session_state.upscaler_results:
-        base   = item["base"]
-        scale  = item["scale"]
-        ow, oh = item["orig_size"]
-        nw, nh = item["new_size"]
-
-        filename, mime, _ = get_file_meta(base, f"upscaled_{scale}x")
-
-        st.write(f"**{base}**")
-        st.caption(f"Original: {ow}×{oh} px → {nw}×{nh} px ({scale}×)")
-
-        col_orig, col_up = st.columns(2)
-        original = safe_open_image(item["file"])
-        if original:
-            col_orig.image(original,    caption="Original",       use_container_width=True)
-        col_up.image(item["path"],      caption=f"Upscaled {scale}×", use_container_width=True)
-
-        with Image.open(item["path"]) as img:
-            img_data = get_download_data(img)
-
-        st.download_button(
-            f"⬇️ Download Upscaled ({scale}×)",
-            data=img_data,
-            file_name=filename,
-            mime=mime,
-            use_container_width=True,
-            key=f"dl_upscaled_{base}",
-        )
-        st.divider()
-
-    zip_items = [(x["base"], x["path"]) for x in st.session_state.upscaler_results]
-    create_zip_download_button(zip_items, "upscaled_images", "upscaled")
-
-
-# =========================================================
 # CROPPER
 # =========================================================
 
@@ -1320,7 +1146,6 @@ tool_logic_map = {
     'splitter':    splitter_logic,
     'swapper':     swapper_logic,
     'stacker':     stacker_logic,
-    'upscaler':    upscaler_logic,
     'cropper':     cropper_logic,
     'corrector':   corrector_logic,
     'watermarker': watermarker_logic,
