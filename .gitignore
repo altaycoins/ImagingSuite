@@ -206,5 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-ImageSuite_v1.py
-ImageSuite_v2.py
+archived_versions/ImageSuite_v1.py
+archived_versions/ImageSuite_v2.py
+
+test.py

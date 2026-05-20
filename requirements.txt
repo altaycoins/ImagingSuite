@@ -2,5 +2,6 @@ streamlit
 Pillow
 rembg
 streamlit-cropper
+super-image
 pandas
 onnxruntime
