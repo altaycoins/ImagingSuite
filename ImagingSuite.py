@@ -1350,6 +1350,7 @@ def show_resources():
     else:
         st.write("RAM cap not exposed by this container.")
 
+        show_resources()
 # =========================================================
 # TOOL MAP
 # =========================================================
