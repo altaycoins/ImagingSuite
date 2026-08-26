@@ -24,7 +24,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 try:
-    from rembg import remove
+    from rembg import remove, new_session
     from streamlit_cropper import st_cropper
 except ImportError as e:
     st.error(f"A required library is missing. Please install it.\n\n{e}")
@@ -193,6 +193,20 @@ def clear_processing_state():
     cleanup_temp_dir()
     gc.collect()
 
+@st.cache_resource(show_spinner=False)
+def get_rembg_session():
+    """
+    Load the background-removal model ONCE and reuse it across reruns/users.
+
+    rembg's default model (as of rembg 2.x) is 'bria-rmbg', a ~1 GB ONNX model.
+    Loading it exhausts the memory available on Streamlit Community Cloud, so the
+    process is OOM-killed the moment a user runs the Remover. We pin 'u2net'
+    (~176 MB) instead, which is the classic default and works well for coins.
+    Swap to 'isnet-general-use' for slightly cleaner masks at a similar size.
+    """
+    return new_session("u2net")
+
+
 def safe_open_image(file):
     try:
         file.seek(0)
@@ -350,6 +364,7 @@ def remover_logic(files):
 
     if files and 'remover_results' not in st.session_state:
         temp_dir = init_temp_dir()
+        session = get_rembg_session()
         progress = st.progress(0, text="Removing backgrounds...")
         processed = []
 
@@ -361,7 +376,7 @@ def remover_logic(files):
                 if len(input_bytes) > 20 * 1024 * 1024:
                     st.warning(f"{f.name} is large and may be slow.")
 
-                output_bytes = remove(input_bytes)
+                output_bytes = remove(input_bytes, session=session)
                 img = Image.open(io.BytesIO(output_bytes))
 
                 def get_clean_bbox(im, threshold=20):
@@ -431,7 +446,7 @@ def remover_logic(files):
             clear_processing_state()
             st.rerun()
 
-        for item in st.session_state.remover_results:
+        for idx, item in enumerate(st.session_state.remover_results):
             filename, mime, _ = get_file_meta(item['base'], "no-bg")
             col1, col2, col3 = st.columns([2, 2, 1])
             original = safe_open_image(item['file'])
@@ -444,7 +459,7 @@ def remover_logic(files):
                 img_data = get_download_data(img)
             col3.download_button(
                 "Download", data=img_data, file_name=filename, mime=mime,
-                key=f"download_{item['base']}"
+                key=f"download_remover_{idx}"
             )
             st.divider()
 
@@ -516,7 +531,7 @@ def stitcher_logic(files):
             st.error(f"Processing failed: {e}")
 
     if 'stitcher_results' in st.session_state:
-        for base, path in st.session_state.stitcher_results:
+        for idx, (base, path) in enumerate(st.session_state.stitcher_results):
             filename, mime, _ = get_file_meta(base, "stitched")
             col1, col2 = st.columns([3, 1])
             col1.image(path, caption=filename, use_container_width=True)
@@ -524,7 +539,7 @@ def stitcher_logic(files):
                 img_data = get_download_data(img)
             col2.download_button(
                 "Download", data=img_data, file_name=filename, mime=mime,
-                key=f"download_{base}"
+                key=f"download_stitcher_{idx}"
             )
             st.divider()
 
@@ -606,14 +621,14 @@ def splitter_logic(files):
                 st.download_button(
                     "Download A", data=get_download_data(part_a),
                     file_name=filename_a, mime=mime_a,
-                    use_container_width=True, key=f"download_a_{base}"
+                    use_container_width=True, key=f"download_a_{idx}"
                 )
             with col2:
                 st.image(part_b, caption=filename_b, use_container_width=True)
                 st.download_button(
                     "Download B", data=get_download_data(part_b),
                     file_name=filename_b, mime=mime_b,
-                    use_container_width=True, key=f"download_b_{base}"
+                    use_container_width=True, key=f"download_b_{idx}"
                 )
             st.divider()
 
@@ -703,7 +718,7 @@ def swapper_logic(files):
             col2.image(processed, caption="Swapped",  use_container_width=True)
             col3.download_button(
                 "Download", data=get_download_data(processed),
-                file_name=filename, mime=mime, key=f"download_{base}"
+                file_name=filename, mime=mime, key=f"download_swapper_{idx}"
             )
             st.divider()
 
@@ -1026,7 +1041,7 @@ def upscaler_logic(files):
         clear_processing_state()
         st.rerun()
 
-    for item in st.session_state.upscaler_results:
+    for idx, item in enumerate(st.session_state.upscaler_results):
         base   = item["base"]
         scale  = item["scale"]
         ow, oh = item["orig_size"]
@@ -1052,7 +1067,7 @@ def upscaler_logic(files):
             file_name=filename,
             mime=mime,
             use_container_width=True,
-            key=f"dl_upscaled_{base}",
+            key=f"dl_upscaled_{idx}",
         )
         st.divider()
 
@@ -1141,14 +1156,14 @@ def corrector_logic(files):
             st.error(f"Processing failed: {e}")
 
     if 'corrector_results' in st.session_state:
-        for base, path in st.session_state.corrector_results:
+        for idx, (base, path) in enumerate(st.session_state.corrector_results):
             filename, mime, _ = get_file_meta(base, "corrected")
             col1, col2 = st.columns([3, 1])
             col1.image(path, caption=filename, use_container_width=True)
             with Image.open(path) as img:
                 col2.download_button(
                     "Download", data=get_download_data(img),
-                    file_name=filename, mime=mime, key=f"download_{base}"
+                    file_name=filename, mime=mime, key=f"download_corrector_{idx}"
                 )
 
         create_zip_download_button(
@@ -1224,14 +1239,14 @@ def watermarker_logic(files):
                 st.error(f"Processing failed: {e}")
 
     if 'watermarker_results' in st.session_state:
-        for base, path in st.session_state.watermarker_results:
+        for idx, (base, path) in enumerate(st.session_state.watermarker_results):
             filename, mime, _ = get_file_meta(base, "watermarked")
             col1, col2 = st.columns([3, 1])
             col1.image(path, caption=filename, use_container_width=True)
             with Image.open(path) as img:
                 col2.download_button(
                     "Download", data=get_download_data(img),
-                    file_name=filename, mime=mime, key=f"download_{base}"
+                    file_name=filename, mime=mime, key=f"download_watermarker_{idx}"
                 )
 
         create_zip_download_button(
@@ -1272,14 +1287,14 @@ def enhancer_logic(files):
             st.error(f"Processing failed: {e}")
 
     if 'enhancer_results' in st.session_state:
-        for base, path in st.session_state.enhancer_results:
+        for idx, (base, path) in enumerate(st.session_state.enhancer_results):
             filename, mime, _ = get_file_meta(base, "enhanced")
             col1, col2 = st.columns([3, 1])
             col1.image(path, caption=filename, use_container_width=True)
             with Image.open(path) as img:
                 col2.download_button(
                     "Download", data=get_download_data(img),
-                    file_name=filename, mime=mime, key=f"download_{base}"
+                    file_name=filename, mime=mime, key=f"download_enhancer_{idx}"
                 )
 
         create_zip_download_button(
