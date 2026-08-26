@@ -1305,25 +1305,6 @@ def enhancer_logic(files):
 # =========================================================
 # STATISTICS
 # =========================================================
-
-def stats_logic():
-    df = get_stats()
-    if df.empty:
-        st.info("No statistics yet.")
-    else:
-        total_uses   = df['uses'].sum()
-        total_images = df['images_processed'].sum()
-
-        col1, col2 = st.columns(2)
-        col1.metric("Total Tool Executions", total_uses)
-        col2.metric("Images Processed",      total_images)
-        st.divider()
-
-        df.columns = ['Tool Name', 'Uses', 'Images Processed']
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-    debug_temp_storage()
-    
 def show_resources():
     import streamlit as st
 
@@ -1349,8 +1330,29 @@ def show_resources():
         st.write(f"**RAM:** {inuse/1e9:.2f} GB used of {cap/1e9:.2f} GB")
     else:
         st.write("RAM cap not exposed by this container.")
+        
+def stats_logic():
+    df = get_stats()
+    if df.empty:
+        st.info("No statistics yet.")
+    else:
+        total_uses   = df['uses'].sum()
+        total_images = df['images_processed'].sum()
 
-        show_resources()
+        col1, col2 = st.columns(2)
+        col1.metric("Total Tool Executions", total_uses)
+        col2.metric("Images Processed",      total_images)
+        st.divider()
+
+        df.columns = ['Tool Name', 'Uses', 'Images Processed']
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    debug_temp_storage()
+    show_resources()  
+    
+
+
+
 # =========================================================
 # TOOL MAP
 # =========================================================
