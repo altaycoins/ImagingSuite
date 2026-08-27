@@ -1305,32 +1305,7 @@ def enhancer_logic(files):
 # =========================================================
 # STATISTICS
 # =========================================================
-def show_resources():
-    import streamlit as st
 
-    total, used, free = shutil.disk_usage("/")
-    st.write(f"**Disk:** {used/1e9:.1f} GB used · {free/1e9:.1f} GB free of {total/1e9:.1f} GB")
-
-    def _read(paths):
-        for p in paths:
-            try:
-                v = open(p).read().strip()
-                if v.isdigit():
-                    return int(v)
-            except OSError:
-                pass
-        return None
-
-    cap  = _read(["/sys/fs/cgroup/memory.max",
-                  "/sys/fs/cgroup/memory/memory.limit_in_bytes"])
-    inuse = _read(["/sys/fs/cgroup/memory.current",
-                   "/sys/fs/cgroup/memory/memory.usage_in_bytes"])
-
-    if cap and inuse and cap < 1e12:   # cap<1e12 skips the "unlimited" sentinel
-        st.write(f"**RAM:** {inuse/1e9:.2f} GB used of {cap/1e9:.2f} GB")
-    else:
-        st.write("RAM cap not exposed by this container.")
-        
 def stats_logic():
     df = get_stats()
     if df.empty:
@@ -1348,11 +1323,33 @@ def stats_logic():
         st.dataframe(df, use_container_width=True, hide_index=True)
 
     debug_temp_storage()
-    show_resources()  
-    
+    show_resources()
 
+def show_resources():
+    total, used, free = shutil.disk_usage("/")
+    st.write(f"**Disk:** {used/1e9:.1f} GB used · {free/1e9:.1f} GB free of {total/1e9:.1f} GB")
 
+    def _read(paths):
+        for p in paths:
+            try:
+                v = open(p).read().strip()
+                if v.isdigit():
+                    return int(v)
+            except OSError:
+                pass
+        return None
 
+    cap   = _read(["/sys/fs/cgroup/memory.max",
+                   "/sys/fs/cgroup/memory/memory.limit_in_bytes"])
+    inuse = _read(["/sys/fs/cgroup/memory.current",
+                   "/sys/fs/cgroup/memory/memory.usage_in_bytes"])
+
+    if inuse and cap and cap < 1e12:   # cap<1e12 skips the "unlimited" sentinel
+        st.write(f"**RAM:** {inuse/1e9:.2f} GB used of {cap/1e9:.2f} GB")
+    elif inuse:
+        st.write(f"**RAM in use:** {inuse/1e9:.2f} GB (container cap not exposed)")
+    else:
+        st.write("RAM stats not exposed by this container.")
 # =========================================================
 # TOOL MAP
 # =========================================================
